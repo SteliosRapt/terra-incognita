@@ -7,10 +7,15 @@ agents, who must discover them by experimentation.
   experimental design, metrics)
 - IMPLEMENTATION.md — ground rules, milestones M1-M5, open questions
 - CHANGELOG.md — version notes incl. measured behavioral effects of each change
-- engine/ — world, agents, actions, events, tick loop (zero LLM dependencies)
-- brains/ — ForagerBrain, RandomScientistBrain (M3 adds the LLM planner)
+- engine/ — world, agents, actions, events, tick loop (zero LLM dependencies);
+  defaults.py holds the canonical run config shared by scripts and viewer
+- brains/ — ForagerBrain, RandomScientistBrain, LLMPlannerBrain + providers
+  (mock / ollama / anthropic / openrouter)
 - configs/techtree_v0.json — the hidden ground-truth technology tree
-- run_m1.py / run_m2.py / test_chain.py — acceptance tests (all passing)
+- viewer/ — live dashboard (`py viewer/server.py`): run configurator, agents,
+  events, stats, replay of past runs
+- run_m1.py / run_m2.py / run_m3.py — milestone acceptance scripts
+- tests/ — pytest suite (`py -m pytest`), no LLM or network calls
 
-Status: M2 complete. Next: M3 (LLM planner via Ollama/Anthropic).
-Quick start: python run_m2.py
+Status: M2 complete; M3 (LLM planner) in progress — acceptance run pending.
+Quick start: `py run_m3.py --provider mock --ticks 300` or `py viewer/server.py`

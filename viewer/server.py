@@ -30,9 +30,9 @@ sys.path.insert(0, str(ROOT))
 
 from engine.sim import Simulation                      # noqa: E402
 from engine.world import World                         # noqa: E402
+from engine.defaults import BASE, ALL_RECIPES          # noqa: E402
 from brains.llm_planner import LLMPlannerBrain         # noqa: E402
 from brains.providers import make_provider             # noqa: E402
-from run_m3 import BASE, ALL_RECIPES                   # noqa: E402
 
 STATIC = pathlib.Path(__file__).resolve().parent / "static"
 RUNS = ROOT / "runs"
@@ -66,6 +66,30 @@ def clean_names(raw, n: int) -> list[str] | None:
     if len({s.lower() for s in names}) != n:
         raise ValueError("agent names must be unique")
     return names
+
+
+def latency_stats(latencies: list) -> dict | None:
+    """avg/p50/p95 over planner-call ms — shared by the live stats tab and
+    summary.json so the two always agree."""
+    lat = sorted(latencies)
+    if not lat:
+        return None
+
+    def pct(p):
+        return lat[min(int(len(lat) * p), len(lat) - 1)]
+    return {"n": len(lat), "avg": round(sum(lat) / len(lat)),
+            "p50": pct(.50), "p95": pct(.95)}
+
+
+def spend_totals(providers: list) -> dict | None:
+    """Merged spend ledger across providers (those without one don't count)."""
+    spend = None
+    for p in providers:
+        t = getattr(p, "totals", None)
+        if t:
+            spend = ({k: spend.get(k, 0) + v for k, v in t.items()}
+                     if spend else dict(t))
+    return spend
 
 
 # model presets (the configurator's quick options; "custom" uses provider/model)
@@ -392,16 +416,6 @@ class RunManager:
         """runs/<name>/summary.json — the durable record the Runs tab reads:
         outcome, final agent states, discoveries, counters, latency, spend."""
         c = self.counters
-        lat = sorted(self.latencies)
-
-        def pct(p):
-            return lat[min(int(len(lat) * p), len(lat) - 1)] if lat else None
-        spend = None
-        for p in self.providers:
-            t = getattr(p, "totals", None)
-            if t:
-                spend = ({k: spend.get(k, 0) + v for k, v in t.items()}
-                         if spend else dict(t))
         summary = {
             "name": self.run_info.get("name"),
             "outcome": outcome,
@@ -422,9 +436,8 @@ class RunManager:
             } for _, a in sorted(sim.agents.items())],
             "discovered": c.get("discovered", {}),
             "counters": {k: v for k, v in c.items() if k != "discovered"},
-            "latency_ms": ({"n": len(lat), "avg": round(sum(lat) / len(lat)),
-                            "p50": pct(.50), "p95": pct(.95)} if lat else None),
-            "spend": spend,
+            "latency_ms": latency_stats(self.latencies),
+            "spend": spend_totals(self.providers),
         }
         path = pathlib.Path(sim.run_dir) / "summary.json"
         with open(path, "w", encoding="utf-8") as f:
@@ -486,17 +499,7 @@ class RunManager:
         c = self.counters
         calls = c.get("planner_calls", 0)
         errs = c.get("parse_errors", 0)
-        spend = None
-        for p in self.providers:
-            t = getattr(p, "totals", None)
-            if t:
-                spend = ({k: spend.get(k, 0) + v for k, v in t.items()}
-                         if spend else dict(t))
         ticks_done = max(sim.tick, 1)
-        lat = sorted(self.latencies)
-
-        def pct(p):
-            return lat[min(int(len(lat) * p), len(lat) - 1)] if lat else None
         # per-tick planner-call / gather series, last 240 ticks (sparklines)
         s0 = max(0, sim.tick - 240)
         series = {"from": s0,
@@ -519,14 +522,13 @@ class RunManager:
                 "taught": c.get("taught", 0),
                 "discovered": c.get("discovered", {}),
                 "recipes": ALL_RECIPES,
-                "spend": spend,
+                "spend": spend_totals(self.providers),
                 "gathered_by": c.get("gathered_by", {}),
                 "said": c.get("said", 0),
                 "gave": c.get("gave", 0),
                 "combine_failed": c.get("combine_failed", 0),
                 "combine_succeeded": c.get("combine_succeeded", 0),
-                "latency_ms": ({"n": len(lat), "avg": round(sum(lat) / len(lat)),
-                                "p50": pct(.50), "p95": pct(.95)} if lat else None),
+                "latency_ms": latency_stats(self.latencies),
                 "calls_per_tick": round(calls / ticks_done, 2),
                 "live": {   # normalized like the baseline, for the comparison panel
                     "deaths_per_1k": round(c.get("deaths", 0) / ticks_done * 1000, 2),

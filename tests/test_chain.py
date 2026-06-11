@@ -2,7 +2,7 @@
 Drives one agent through gather→axe→farm→fire→cooked_food→pickaxe→storehouse
 with direct action calls. No brains, no luck."""
 import pathlib, random, sys
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from engine.world import World, GRASS
 from engine.agent import AgentState

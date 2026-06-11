@@ -1,5 +1,32 @@
 # CHANGELOG / Design Notes
 
+## v0.37 — Housekeeping: shared defaults, tests/, encoding fix (2026-06-11)
+**Encoding bugfix (behavioral):** `techtree.py` and `run_m2.py` opened text
+files without `encoding="utf-8"` — on this machine (cp1253 default) the
+techtree's non-ASCII characters were silently mojibaked into the feedback
+strings agents see, and `run_m2.py`'s stats reader crashed outright on
+UTF-8 event logs. This is the only change in this version that alters run
+output: M2 event hashes shift because feedback text is now decoded
+correctly (verified by isolation: HEAD + encoding fix alone reproduces the
+new hash exactly; seed-42 events `816a565b…`). M1 logs are byte-identical
+to pre-change runs (`f10d156c…`).
+
+**Shared config:** new `engine/defaults.py` — WORLD params, BASE (M3),
+TECHTREE_PATH and ALL_RECIPES (now derived from techtree_v0.json instead of
+hardcoded). run_m1/m2/m3 and the viewer import it; `viewer/server.py` no
+longer imports from the run_m3 script. Config content is unchanged
+(M1 determinism hash proves it).
+
+**Layout:** tests moved to tests/ (`py -m pytest` from the root as before);
+README refreshed (viewer, run_m3, tests/, current status). server.py:
+duplicated latency-percentile and spend-aggregation code extracted into
+`latency_stats()` / `spend_totals()`, shared by the live stats API and
+summary.json.
+
+**Verified:** 35 tests pass from the new layout; M1 determinism PASS with
+byte-identical logs; M2 determinism PASS; 60t mock M3 run through
+run_m3.py; viewer imports clean.
+
 ## v0.36 — Field station v2: one tabbed console, named agents, replay (2026-06-11)
 **Layout:** the two side columns are gone. One rounded console card on the
 right, drag-resizable (splitter, persisted), with browser-style tabs:

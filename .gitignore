@@ -13,3 +13,4 @@ scratch/
 # tooling
 .playwright-mcp/
 .claude/
+AGENTS.md

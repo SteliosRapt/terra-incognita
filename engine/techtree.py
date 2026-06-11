@@ -37,7 +37,7 @@ class CombineResult:
 
 class TechTree:
     def __init__(self, path: str):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             self.cfg = json.load(f)
         self.recipes = self.cfg["recipes"]
         self.failure_cost = self.cfg.get("failure_cost", 1.0)

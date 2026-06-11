@@ -3,25 +3,10 @@ import hashlib, pathlib, sys
 ROOT = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 from engine.sim import Simulation
+from engine.defaults import WORLD
 from brains.scripted import ForagerBrain
 
-CFG = {
-    "seed": 42,
-    "grid_size": 32,
-    "n_agents": 12,
-    "forest_fraction": 0.15,
-    "mountain_fraction": 0.08,
-    "stone_per_tile": 12,
-    "wood_regrow_ticks": 40,
-    "berry_patches": 4,
-    "berry_patch_size": 14,
-    "berry_regrow_prob": 0.05,
-    "berry_spoil_prob": 0.02,
-    "water_fraction": 0.10,
-    "lakes": 3,
-    "forest_regions": 4,
-    "mountain_ranges": 3,
-}
+CFG = dict(WORLD, seed=42, n_agents=12)
 
 
 def run(run_dir):
