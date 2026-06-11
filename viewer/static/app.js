@@ -40,6 +40,50 @@ function esc(s) {
   return d.innerHTML;
 }
 
+/* Update an element's HTML only when it actually changed, preserving scroll
+   position and which <details data-k=…> were open — so polling never yanks
+   the UI out from under the user. Returns true if the DOM was touched. */
+function setHTML(el, html) {
+  if (el._lastHTML === html) return false;
+  const open = new Set(Array.from(el.querySelectorAll("details[data-k]"))
+    .filter((d) => d.open).map((d) => d.dataset.k));
+  const st = el.scrollTop;
+  el.innerHTML = html;
+  for (const d of el.querySelectorAll("details[data-k]"))
+    if (open.has(d.dataset.k)) d.open = true;
+  el.scrollTop = st;
+  el._lastHTML = html;
+  return true;
+}
+
+function fmtDur(sec) {
+  if (!isFinite(sec) || sec < 0) return "—";
+  if (sec < 90) return Math.round(sec) + "s";
+  if (sec < 5400) return Math.round(sec / 60) + "m";
+  return Math.floor(sec / 3600) + "h " + String(Math.round(sec % 3600 / 60)).padStart(2, "0") + "m";
+}
+
+/* tick-rate sampling for the ETA (client-side: works even mid-run) */
+let rateSamples = [], rateRun = null;
+function sampleRate(runName, status, tick) {
+  if (runName !== rateRun || status !== "running") {
+    if (runName !== rateRun || status === "paused") rateSamples = [];
+    rateRun = runName;
+    if (status !== "running") return;
+  }
+  const last = rateSamples[rateSamples.length - 1];
+  if (!last || tick > last.tick) {
+    rateSamples.push({ tick, t: Date.now() });
+    if (rateSamples.length > 40) rateSamples.shift();
+  }
+}
+function etaText(total, tick) {
+  if (rateSamples.length < 3) return "";
+  const a = rateSamples[0], b = rateSamples[rateSamples.length - 1];
+  const sPerTick = (b.t - a.t) / 1000 / (b.tick - a.tick);
+  return { rate: sPerTick, eta: fmtDur((total - tick) * sPerTick) };
+}
+
 /* ------------------------------------------------------------- polling */
 async function poll() {
   try {
@@ -159,11 +203,20 @@ function renderPanels() {
   const total = state.run.ticks || 0;
   const tick = snap ? snap.tick : 0;
   const pct = total ? Math.min(tick / total * 100, 100) : 0;
+  sampleRate(state.run.name, st, tick);
+  const eta = st === "running" ? etaText(total, tick) : "";
   $("progFill").style.width = pct + "%";
   $("progress").classList.toggle("done", st === "finished");
-  $("progText").textContent = snap
-    ? `TICK ${tick} / ${total}  ·  ${pct.toFixed(0)}%` + (st === "finished" ? "  ·  DONE" : st === "paused" ? "  ·  PAUSED" : "")
-    : "no run";
+  let ptxt = "no run";
+  if (snap) {
+    ptxt = `TICK ${tick} / ${total}  ·  ${pct.toFixed(pct > 0 && pct < 10 ? 1 : 0)}%`;
+    if (eta) ptxt += `  ·  ${eta.rate.toFixed(1)}s/tick  ·  ETA ~${eta.eta}`;
+    if (st === "finished") ptxt += "  ·  DONE";
+    if (st === "paused") ptxt += "  ·  PAUSED";
+    const started = state.run.started;
+    if (started && st === "running") ptxt += `  ·  elapsed ${fmtDur(Date.now() / 1000 - started)}`;
+  }
+  $("progText").textContent = ptxt;
 
   $("btnPause").disabled = st !== "running";
   $("btnResume").disabled = st !== "paused";
@@ -178,25 +231,25 @@ function renderPanels() {
 
   if (state.error) { $("errorBanner").textContent = state.error; $("errorBanner").classList.remove("hidden"); }
 
-  if (!snap) { $("keyStats").innerHTML = ""; return; }
+  if (!snap) { setHTML($("keyStats"), ""); return; }
   const s = snap.stats;
   const nDisc = Object.keys(s.discovered).length;
-  $("keyStats").innerHTML = `
+  setHTML($("keyStats"), `
     <span class="ks ${s.alive < snap.agents.length ? "warm" : ""}">ALIVE<b>${s.alive}/${snap.agents.length}</b></span>
     <span class="ks ${s.deaths ? "bad" : ""}">DEATHS<b>${s.deaths}</b></span>
     <span class="ks ${s.parse_rate >= 5 ? "bad" : ""}">PARSE FAIL<b>${s.parse_rate}%</b></span>
     <span class="ks ${s.taught ? "warm" : ""}">TAUGHT<b>${s.taught}</b></span>
     <span class="ks ${nDisc ? "warm" : ""}">DISCOVERED<b>${nDisc}/${s.recipes.length}</b></span>
-    <span class="ks">LLM CALLS<b>${s.planner_calls}</b></span>`;
+    <span class="ks">LLM CALLS<b>${s.planner_calls}</b></span>`);
 
-  $("discoveries").innerHTML = s.recipes.map((r) => {
+  setHTML($("discoveries"), s.recipes.map((r) => {
     const t = s.discovered[r];
     return `<span class="chip ${t !== undefined ? "lit" : ""}">${r}${t !== undefined ? " t" + t : ""}</span>`;
-  }).join("");
+  }).join(""));
 
-  $("feed").innerHTML = snap.events.slice().reverse().map(fmtEvent).join("");
+  setHTML($("feed"), snap.events.slice().reverse().map(fmtEvent).join(""));
 
-  $("agentCards").innerHTML = snap.agents.map((a) => {
+  const cardsChanged = setHTML($("agentCards"), snap.agents.map((a) => {
     const cls = (a.id === selected ? " sel" : "") + (a.alive ? "" : " dead");
     const elvl = a.energy < 20 ? "crit" : a.energy < 40 ? "low" : "";
     return `<div class="card${cls}" data-id="${a.id}">
@@ -205,9 +258,10 @@ function renderPanels() {
       <div class="ebar ${elvl}"><i style="width:${Math.max(a.energy, 0)}%"></i></div>
       <div class="what">${a.alive ? esc(a.intention || "…") : "☠ dead"}</div>
     </div>`;
-  }).join("");
-  for (const el of document.querySelectorAll(".card"))
-    el.onclick = () => { selected = el.dataset.id; renderPanels(); };
+  }).join(""));
+  if (cardsChanged)
+    for (const el of document.querySelectorAll(".card"))
+      el.onclick = () => { selected = el.dataset.id; renderPanels(); };
 
   renderInspector(snap);
 }
@@ -245,7 +299,7 @@ function renderInspector(snap) {
   const box = $("inspector");
   const a = snap.agents.find((x) => x.id === selected);
   $("inspId").textContent = a ? a.id : "";
-  if (!a) { box.innerHTML = `<p class="dim">select an agent on the map or in the list</p>`; return; }
+  if (!a) { setHTML(box, `<p class="dim">select an agent on the map or in the list</p>`); return; }
 
   const inv = Object.entries(a.inventory).map(([k, v]) => `${k} ×${v}`).join(", ") || "empty";
   const plan = a.plan.length
@@ -261,11 +315,11 @@ function renderInspector(snap) {
   if (pr) {
     llm = `<p class="kv">t${pr.tick} · attempt ${pr.attempt} · ${pr.ms} ms ·
       ${pr.ok ? `<span class="ok">parsed ok</span>` : `<span class="fail">${esc(pr.error)}</span>`}</p>
-      <details><summary>prompt (what the model saw)</summary><pre>${esc(pr.system)}\n\n${esc(pr.prompt)}</pre></details>
-      <details><summary>raw response</summary><pre>${esc(pr.response || "(no response)")}</pre></details>`;
+      <details data-k="prompt"><summary>prompt (what the model saw)</summary><pre>${esc(pr.system)}\n\n${esc(pr.prompt)}</pre></details>
+      <details data-k="response"><summary>raw response</summary><pre>${esc(pr.response || "(no response)")}</pre></details>`;
   }
 
-  box.innerHTML = `
+  setHTML(box, `
     <p class="kv">${a.alive ? `⚡ <b>${a.energy}</b>/100` : "☠ dead"} · pos <b>(${a.x}, ${a.y})</b>
       · last planned t${a.last_plan_tick}</p>
     <h4>inventory</h4><p>${esc(inv)}</p>
@@ -276,9 +330,9 @@ function renderInspector(snap) {
     ${a.heard.length ? `<h4>heard of</h4><p>${a.heard.join(", ")}</p>` : ""}
     <h4>beliefs</h4>${beliefs}
     <h4>notes (scratchpad)</h4><pre>${esc(a.notes || "(empty)")}</pre>
-    <details><summary>journal — what ${a.id} has seen</summary>
+    <details data-k="journal"><summary>journal — what ${a.id} has seen</summary>
       <pre>${esc(a.journal.join("\n") || "(empty)")}</pre></details>
-    <h4>last llm call</h4>${llm}`;
+    <h4>last llm call</h4>${llm}`);
 }
 
 function fmtStep(s) {

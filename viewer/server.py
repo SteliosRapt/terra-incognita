@@ -165,7 +165,8 @@ class RunManager:
             self.run_info = {"name": name, "provider": provider,
                              "model": model or ("—" if provider == "mock" else "default"),
                              "condition": condition, "agents": n_agents,
-                             "ticks": ticks, "seed": seed}
+                             "ticks": ticks, "seed": seed,
+                             "started": time.time()}
             self.status = "running"
             self._stop.clear()
             self._pause.clear()
