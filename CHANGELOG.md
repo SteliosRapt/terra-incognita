@@ -27,6 +27,11 @@ summary.json.
 byte-identical logs; M2 determinism PASS; 60t mock M3 run through
 run_m3.py; viewer imports clean.
 
+**Docs (follow-up):** SPEC §6 layout and IMPLEMENTATION brought in line with
+reality — defaults.py/tests/ added, world_default.yaml and the FUTURE.md
+reference dropped, viewer marked shipped (v0.31–0.36, M4 gap = analysis/),
+golden-fixture test noted as not yet implemented, pyyaml dropped.
+
 ## v0.36 — Field station v2: one tabbed console, named agents, replay (2026-06-11)
 **Layout:** the two side columns are gone. One rounded console card on the
 right, drag-resizable (splitter, persisted), with browser-style tabs:

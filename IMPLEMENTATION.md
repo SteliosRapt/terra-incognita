@@ -7,7 +7,7 @@ Read `SPEC.md` first. That document is the source of truth for *what* to build; 
 3. **The agent's mind is opaque to the engine.** Engine never reads `beliefs`/`notes` for logic; brains never read the World directly — only the rendered `Observation`. (`techtree.py` already enforces this shape: it takes a `CombineContext`, not the World.)
 4. **Everything tunable lives in config** (YAML/JSON), never as constants in code: map seed, grid size, energy rates, visibility radii, failure cost, feedback verbosity, replan interval K, knowledge condition.
 5. **Determinism:** one `random.Random(seed)` instance owned by the sim, passed down. Two runs with the same config+seed and scripted brains must produce byte-identical event logs — this is Milestone 1's acceptance test.
-6. Python 3.11+, type hints everywhere, dataclasses for state, pytest for tests, no heavy frameworks. Dependencies allowed: pyyaml, pytest, (later) requests/anthropic/ollama client, pandas+matplotlib in `analysis/` only.
+6. Python 3.11+, type hints everywhere, dataclasses for state, pytest for tests, no heavy frameworks. Dependencies allowed: pytest, requests (openrouter), (later) anthropic/ollama client, pandas+matplotlib in `analysis/` only. Configs ended up JSON (stdlib), no pyyaml.
 
 ## Existing reference code
 - `engine/techtree.py` — DONE, tested. Resolution rules: exact-quantity match; most-conditional recipe wins ties; near_miss = right ingredients/wrong condition; failure cost configurable. Do not change semantics without updating its smoke tests.
@@ -28,8 +28,8 @@ Wire `techtree.py` into `actions.py` (combine), implement produces/effects: tool
 **Done when:** a 10-agent blind run completes overnight on Ollama without crashing; parse failure rate < 5%; a transcript shows at least one taught recipe (recipe_learned source=taught).
 
 ### M4 — Eyes and numbers
-`viewer/` HTML canvas replay (reads events.jsonl only; agent inspector panel; scrub bar). `analysis/`: discovery curves, diffusion graph, misinformation rate, specialization entropy, survival, Gini — each a function over the event log → PNG + CSV.
-**Done when:** `python analysis/report.py runs/<id>` produces all plots; viewer replays the same run.
+`viewer/` HTML canvas replay (reads events.jsonl only; agent inspector panel; scrub bar) — SHIPPED early (v0.31–0.36), and grew beyond this scope into a live dashboard with a run configurator. Remaining M4 work is `analysis/`: discovery curves, diffusion graph, misinformation rate, specialization entropy, survival, Gini — each a function over the event log → PNG + CSV.
+**Done when:** `python analysis/report.py runs/<id>` produces all plots; viewer replays the same run (replay: done, v0.36).
 
 ### M5 — Science
 Experiment runner: takes a conditions YAML, runs N seeds per cell (sequential is fine), aggregates. Pilot: Blind vs Oracle, 3 seeds. Then RQ1 sweep.
@@ -37,7 +37,7 @@ Experiment runner: takes a conditions YAML, runs N seeds per cell (sequential is
 ## Testing strategy
 - Unit: engine math (energy, capacity, regrowth, visibility radius sets).
 - Property: random action sequences never produce negative inventories / energy > 100 / events referencing dead agents.
-- Golden: one frozen seed's first 50 ticks of events committed as fixture; CI diffs against it.
+- Golden: one frozen seed's first 50 ticks of events committed as fixture; CI diffs against it. (Not implemented yet — run_m1/run_m2 do a same-process determinism check instead; a committed fixture would also catch cross-version drift.)
 - Brain tests use a `FakeBrain` returning canned plans — never call LLMs in tests.
 
 ## Open questions (decide before the relevant milestone)

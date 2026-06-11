@@ -250,17 +250,18 @@ terra-incognita/
 │   ├── agent.py        # state, journal, executor (Tier B)
 │   ├── techtree.py     # loads techtree.json, resolves combine() attempts
 │   ├── actions.py      # primitive action implementations + validation
-│   └── sim.py          # tick loop, event log writer (JSONL)
+│   ├── sim.py          # tick loop, event log writer (JSONL)
+│   └── defaults.py     # canonical run config (world params, recipe list)
 ├── brains/
 │   ├── llm_planner.py  # prompt builder, JSON parsing, retry logic
-│   ├── providers.py    # ollama / anthropic backends
+│   ├── providers.py    # mock / ollama / anthropic / openrouter backends
 │   └── scripted.py     # rule-based baseline agent (important control!)
 ├── configs/
-│   ├── world_default.yaml
 │   ├── techtree_v0.json
-│   └── experiments/    # one YAML per condition cell
-├── analysis/           # discovery curves, diffusion graphs, stats (pandas/matplotlib)
-├── viewer/             # replay visualizer
+│   └── experiments/    # (planned, M5) one config per condition cell
+├── analysis/           # (planned, M4) discovery curves, diffusion graphs, stats
+├── viewer/             # live dashboard + replay of past runs
+├── tests/              # pytest suite (no LLM/network calls)
 └── runs/               # event logs (JSONL), one dir per run
 ```
 
@@ -281,6 +282,6 @@ Design principles: **everything is config** (tree, costs, map seed, knowledge co
 - **LLM prior contamination:** models "know" Minecraft-style crafting. Mitigation: counter-intuitive tree control (§2) — this is a *feature* scientifically (recall vs. reasoning).
 - **JSON output failures from small models:** retry + schema validation + fallback to `wait`. Log failure rate.
 - **Slow runs:** local 7B ≈ 2–5 s/call ⇒ a 1000-tick, 12-agent run ≈ 1–2 hours. Fine overnight; parallelize seeds.
-- **Scope creep:** playable human mode, combat — parked in `FUTURE.md`, not v0.
+- **Scope creep:** playable human mode, combat — parked for later, not v0.
 - **Committed for v1: agent reproduction.** Turns knowledge transmission into cultural *inheritance*: agents die, societies either teach the next generation or suffer "dark ages" (measurable recipe loss & rediscovery). Open design question to resolve before v1: what does a newborn inherit — blank slate, parent's notes, or a "childhood" teaching period?
 - **Single-author limits:** results framed as "case study + open framework," not grand claims. The open-source framework is itself a contribution (cf. Concordia, Melting Pot).
