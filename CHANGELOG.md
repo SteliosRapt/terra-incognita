@@ -1,5 +1,19 @@
 # CHANGELOG / Design Notes
 
+## v0.35 — gather target fix, validated (2026-06-11)
+**Fixed:** `_validate_step` stripped x/y from gather steps — every targeted
+gather reached the engine untargeted and died "no wood here", which is why
+v032_smoke_local (6 × 40, gemma4:e2b) still replanned every tick (231/232
+plans dead on step 1, 0.4% completion) despite the v0.32 engine fix.
+
+**Result (v035_smoke_local, same setup):** 49 planner calls in 40 ticks
+(was 232), 28.6% plan completion (was 0.4%), 150 gathers/100 ticks (no-LLM
+baseline: 139), 0 deaths, 0 parse errors, and THREE blind discoveries by
+three different agents: axe A04@t7, basket A05@t14, pickaxe A02@t37.
+Remaining interrupts are legitimate (depleted tiles, mis-counted combine
+materials) and now land in the journal. Wall time ~7.5 min vs ~37 min for
+the broken run — the experiment is now latency-bound by genuine replans only.
+
 ## v0.34 — Run configurator, model mixes, baseline panel (2026-06-11)
 **Models:** gemma-4 is now the main OpenRouter model
 (google/gemma-4-31b-it:free, 26b-a4b:free as rate-limit fallback);
