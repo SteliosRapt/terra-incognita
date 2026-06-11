@@ -20,6 +20,16 @@ for display only — the viewer is measurement, like the event log.
 silently at ~t10 (process killed hard, no traceback; runs/ dir is a useless
 partial). Acceptance run to be relaunched from the UI.
 
+**UI polish:** slim header (transport controls top-right), always-visible HUD
+with tick progress bar + the acceptance-relevant numbers (alive, deaths,
+parse-fail % vs the 5% bar, taught, discovered), bigger map, leaner side
+decks. Desktop shortcut "Terra Incognita" launches the server minimized and
+opens the browser; if the server is already up it just opens the page.
+
+**Repo:** git init + private GitHub repo (PastelDev/terra-incognita).
+runs/ and scratch/ (unrelated local files) are gitignored; experiment data
+stays local, results live in this changelog.
+
 ## v0.3 — M3: Minds
 **Added:** `brains/llm_planner.py` (build_prompt with the spec §3 sections
 STATUS / YOU KNOW / YOU BELIEVE / NOTES / NEARBY / RECENT EVENTS / ACTIONS;
