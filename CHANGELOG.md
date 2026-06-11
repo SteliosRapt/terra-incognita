@@ -1,5 +1,66 @@
 # CHANGELOG / Design Notes
 
+## v0.34 — Run configurator, model mixes, baseline panel (2026-06-11)
+**Models:** gemma-4 is now the main OpenRouter model
+(google/gemma-4-31b-it:free, 26b-a4b:free as rate-limit fallback);
+qwen/qwen3.6-35b-a3b ($0.15/M in, $1.00/M out) is the paid tier
+(`configs/openrouter.json` "paid_models", `make_provider(tier="paid")`).
+Viewer run configurator is defaults-first: a "models" preset select —
+**local-e2b** (ollama gemma4:e2b, the current acceptance setup),
+**openrouter-90-10** (floor(10%) of agents on paid qwen3.6 — A00.. first —
+rest on free gemma-4, both billing into one costs.jsonl), mock, or custom
+provider/model. Ticks, agents, seed, condition and ALL map parameters
+(grid size, terrain fractions, berry/wood/stone knobs) are editable in the
+form, prefilled from engine defaults via /api/defaults; only changed values
+are sent. Missing OPENROUTER_API_KEY fails at /api/start, not at tick 1.
+
+**Measurement:** new "vs no-LLM runs" panel — live run's deaths/1k ticks,
+plan completion %, gathers/100 ticks and recipes found next to the same
+numbers computed from all scripted/mock runs in runs/ (classified by
+prompts.jsonl provider; tick-weighted). Discovery chips now name the
+discoverer: "axe A06 t63" (✎ = taught), tooltip has the source. Agent
+inspector shows which model produced the last exchange (matters in mixes).
+
+## v0.32 — Engine fixes from the first LLM run (2026-06-11, uncommitted until now)
+The m3_accept_ui_135429 run (gemma4:e2b, died at t78, 2 deaths): 607 of 631
+plans died on step 1, 590 of them "no wood/berries here" — models assume
+gather(x, y) walks to the tile. Fixes: `gather` takes an optional target and
+walks there first (one multi-tick primitive); `plan_interrupted` IS journaled
+(deviating from spec §3b — without the failure reason in context, models
+repeat the identical broken step forever); survival basics (berries are food,
++25; wood/stone are not) moved into the system prompt — withholding them
+measured confusion, not discovery; FORMAT_DOC tells the model planning ahead
+is cheaper than being re-consulted. Planning is fanned out to threads when
+every brain declares parallel_safe (network providers do, mock doesn't — it
+mutates the shared seeded rng); with 10 agents on a 10 s model that is the
+difference between ~100 s and ~10 s per tick.
+
+## v0.33 — OpenRouter backend + spend ledger (2026-06-11)
+**Added:** `OpenRouterProvider` in `brains/providers.py` — ordered model
+fallback chain (`configs/openrouter.json` is the configurator; CLI/UI
+`--model "a,b,c"` overrides it). A model answering 429 (rate limit) or 402
+(free credits gone) goes on cooldown (Retry-After / X-RateLimit-Reset
+honored, defaults 65 s / 1 h) and the next model takes over; the preferred
+model is retried once its cooldown expires; if the whole chain is cooling,
+complete() blocks until the soonest reset. This is the one sanctioned
+fallback — any other error still raises. Every reply's usage (OpenRouter
+reports cost in USD with `usage.include`) is appended to `costs.jsonl` next
+to `prompts.jsonl` with running totals; run_m3 prints the spend summary, the
+viewer HUD shows SPEND + RATE-LIMITED chips. Key from `OPENROUTER_API_KEY`.
+
+**Fixed:** the 2b parallel-planning path in sim.py was dead code — nothing
+ever set `parallel_safe`. LLMPlannerBrain now mirrors the provider's flag
+(ollama/anthropic/openrouter True, mock False: it mutates the shared seeded
+rng). prompts.jsonl appends now go through a module lock (brains share one
+file; planner threads would interleave lines). One provider instance is
+shared by all brains (run_m3 + viewer factories) so rate-limit cooldowns and
+the spend ledger are global, not per-agent.
+
+**Tests:** `test_openrouter.py` — fallback on 429, cooldown stickiness and
+expiry, 402 long cooldown, whole-chain-limited recovery, in-body provider
+errors raise, 500 raises without trying the next model, config-file
+defaults + `--model` override. No network: scripted fake requests module.
+
 ## v0.31 — Field Station: live viewer (2026-06-11)
 **Added:** `viewer/server.py` + `viewer/static/` — a live dashboard
 (`py viewer/server.py`, http://127.0.0.1:8787). Stdlib-only HTTP server runs a

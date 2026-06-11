@@ -35,6 +35,20 @@ RUNS = ROOT / "runs"
 
 TERRAIN_CHAR = {"grass": "g", "forest": "T", "mountain": "M", "water": "w"}
 
+# world keys the UI may override at /api/start (defaults-first: BASE fills the form)
+WORLD_INT = {"grid_size", "stone_per_tile", "wood_regrow_ticks", "berry_patches",
+             "berry_patch_size", "lakes", "forest_regions", "mountain_ranges"}
+WORLD_FLOAT = {"forest_fraction", "mountain_fraction", "berry_regrow_prob",
+               "berry_spoil_prob", "water_fraction"}
+
+# model presets (the configurator's quick options; "custom" uses provider/model)
+PRESETS = {
+    "local-e2b": "ollama gemma4:e2b, all agents",
+    "openrouter-90-10": "90% gemma-4 free / 10% (floor) qwen3.6-35b-a3b paid",
+    "mock": "deterministic mock brain",
+    "custom": "provider + model fields",
+}
+
 
 class EventTee:
     """Wraps the sim's events.jsonl file object: still writes (and now flushes)
@@ -71,10 +85,62 @@ class InspectableBrain(LLMPlannerBrain):
         if self._store is None:
             return
         rec = {"tick": obs.tick, "attempt": attempt, "ms": ms,
-               "ok": err is None, "error": err,
+               "ok": err is None, "error": err, "model": self.provider.name,
                "system": system, "prompt": user, "response": raw}
         with self._store_lock:
             self._store[obs.me["id"]] = rec
+
+
+def compute_baseline() -> dict | None:
+    """Reference stats from the no-LLM runs already in runs/: scripted M2 runs
+    (no prompts.jsonl) and MockProvider runs (telemetry says provider=mock).
+    Tick-weighted totals, normalized — the dashboard shows the live LLM run
+    against these numbers."""
+    runs_used, ticks = [], 0
+    deaths = calls = completed = gathered = 0
+    recipes = set()
+    for d in sorted(RUNS.iterdir()) if RUNS.exists() else []:
+        ev_path = d / "events.jsonl"
+        if not d.is_dir() or not ev_path.exists():
+            continue
+        p = d / "prompts.jsonl"
+        if p.exists() and p.stat().st_size:
+            try:
+                with open(p, encoding="utf-8") as f:
+                    first = json.loads(f.readline())
+                if first.get("provider") != "mock":
+                    continue                       # an LLM run — not a baseline
+            except (json.JSONDecodeError, OSError):
+                continue
+        try:
+            run_ticks = 0
+            with open(ev_path, encoding="utf-8") as f:
+                for line in f:
+                    ev = json.loads(line)
+                    run_ticks = max(run_ticks, ev["tick"] + 1)
+                    t = ev["type"]
+                    if t == "agent_died":
+                        deaths += 1
+                    elif t == "planner_called":
+                        calls += 1
+                    elif t == "plan_completed":
+                        completed += 1
+                    elif t == "gathered":
+                        gathered += 1
+                    elif t == "recipe_learned":
+                        recipes.add(ev["payload"]["recipe"])
+        except (json.JSONDecodeError, OSError, KeyError):
+            continue
+        if run_ticks:
+            runs_used.append(d.name)
+            ticks += run_ticks
+    if not ticks:
+        return None
+    return {"runs": runs_used, "ticks": ticks,
+            "deaths_per_1k": round(deaths / ticks * 1000, 2),
+            "completion_pct": round(completed / calls * 100, 1) if calls else 0.0,
+            "gathers_per_100": round(gathered / ticks * 100, 1),
+            "recipes_discovered": len(recipes)}
 
 
 class RunManager:
@@ -97,6 +163,8 @@ class RunManager:
         self.counters: dict = {}
         self.prompt_store: dict = {}
         self.prompt_lock = threading.Lock()
+        self.providers: list = []             # shared LLM provider(s) of the live run
+        self.baseline = compute_baseline()    # no-LLM reference stats (runs/ scan)
 
     # ---------- event accounting (called from worker thread via EventTee) ----
     def consume_event(self, ev: dict):
@@ -106,11 +174,17 @@ class RunManager:
             c["planner_calls"] = c.get("planner_calls", 0) + 1
         elif t == "planner_parse_error":
             c["parse_errors"] = c.get("parse_errors", 0) + 1
+        elif t == "plan_completed":
+            c["plans_completed"] = c.get("plans_completed", 0) + 1
+        elif t == "gathered":
+            c["gathered"] = c.get("gathered", 0) + 1
         elif t == "agent_died":
             c["deaths"] = c.get("deaths", 0) + 1
         elif t == "recipe_learned":
             r = ev["payload"]["recipe"]
-            c.setdefault("discovered", {}).setdefault(r, ev["tick"])
+            c.setdefault("discovered", {}).setdefault(
+                r, {"tick": ev["tick"], "by": ev["actor"],
+                    "source": ev["payload"].get("source", "discovered")})
             if ev["payload"].get("source") == "taught":
                 c["taught"] = c.get("taught", 0) + 1
         if t not in ("resource_regrown",):     # regrowth spams the feed
@@ -121,40 +195,86 @@ class RunManager:
         with self.lock:
             if self.status in ("running", "paused"):
                 raise RuntimeError("a run is already active — stop it first")
-            provider = params.get("provider", "mock")
-            if provider not in ("mock", "ollama", "anthropic"):
-                raise ValueError(f"unknown provider {provider!r}")
+            preset = params.get("preset", "custom")
+            if preset not in PRESETS:
+                raise ValueError(f"unknown preset {preset!r}")
             condition = params.get("condition", "blind")
             n_agents = int(params.get("agents", 10))
             ticks = int(params.get("ticks", 300))
             seed = int(params.get("seed", 42))
             model = params.get("model") or None
+            if preset == "local-e2b":
+                provider, model = "ollama", "gemma4:e2b"
+            elif preset == "mock":
+                provider, model = "mock", None
+            elif preset == "openrouter-90-10":
+                provider, model = "openrouter", None
+            else:
+                provider = params.get("provider", "mock")
+                if provider not in ("mock", "ollama", "anthropic", "openrouter"):
+                    raise ValueError(f"unknown provider {provider!r}")
             name = params.get("name") or (
-                f"ui_{provider}_{condition}_s{seed}_{time.strftime('%H%M%S')}")
+                f"ui_{preset if preset != 'custom' else provider}"
+                f"_{condition}_s{seed}_{time.strftime('%H%M%S')}")
             self.tick_delay = float(params.get("tick_delay", 0.12 if provider == "mock" else 0.0))
 
             cfg = dict(BASE, seed=seed, n_agents=n_agents,
                        knowledge_condition=condition,
                        replan_interval=int(params.get("replan", 15)))
+            for k, v in (params.get("world") or {}).items():
+                if k in WORLD_INT:
+                    cfg[k] = int(v)
+                elif k in WORLD_FLOAT:
+                    cfg[k] = float(v)
+                else:
+                    raise ValueError(f"unknown world parameter {k!r}")
             run_dir = RUNS / name
             run_dir.mkdir(parents=True, exist_ok=True)
             telemetry = run_dir / "prompts.jsonl"
             telemetry.write_text("", encoding="utf-8")
 
-            spec = {"backend": provider}
-            if model:
-                spec["model"] = model
-
             self.prompt_store.clear()
             self.events.clear()
             self.counters = {}
             self.error = None
+            self.providers = []   # shared instances: global cooldowns + spend
 
-            def factory(rng):
-                return InspectableBrain(make_provider(spec, rng),
-                                        telemetry_path=str(telemetry),
+            def brain(prov):
+                return InspectableBrain(prov, telemetry_path=str(telemetry),
                                         store=self.prompt_store,
                                         store_lock=self.prompt_lock)
+
+            paid_agents: list[str] = []
+            if preset == "openrouter-90-10":
+                # floor(10%) of the population on the paid qwen3.6 chain, the
+                # rest on free gemma-4. Providers are built NOW so a missing
+                # OPENROUTER_API_KEY fails the start request, not tick 1.
+                cost_path = str(run_dir / "costs.jsonl")
+                free = make_provider({"backend": "openrouter",
+                                      "cost_path": cost_path})
+                paid = make_provider({"backend": "openrouter", "tier": "paid",
+                                      "cost_path": cost_path})
+                self.providers = [free, paid]
+                n_paid = n_agents // 10
+                paid_agents = [f"A{i:02d}" for i in range(n_paid)]
+                counter = iter(range(n_agents))   # sim builds brains in name order
+
+                def factory(rng):
+                    return brain(paid if next(counter) < n_paid else free)
+                model_label = (f"{free.models[0]} ({n_agents - n_paid}) + "
+                               f"{paid.models[0]} ({n_paid}: {', '.join(paid_agents) or '—'})")
+            else:
+                spec = {"backend": provider}
+                if model:
+                    spec["model"] = model
+                if provider == "openrouter":
+                    spec["cost_path"] = str(run_dir / "costs.jsonl")
+
+                def factory(rng):
+                    if not self.providers:
+                        self.providers = [make_provider(spec, rng)]
+                    return brain(self.providers[0])
+                model_label = model or ("—" if provider == "mock" else "default")
 
             sim = Simulation(cfg, factory, str(run_dir))
             sim.logf = EventTee(sim.logf, self)
@@ -163,7 +283,8 @@ class RunManager:
 
             self.sim = sim
             self.run_info = {"name": name, "provider": provider,
-                             "model": model or ("—" if provider == "mock" else "default"),
+                             "preset": preset, "model": model_label,
+                             "paid_agents": paid_agents,
                              "condition": condition, "agents": n_agents,
                              "ticks": ticks, "seed": seed,
                              "started": time.time()}
@@ -258,6 +379,13 @@ class RunManager:
         c = self.counters
         calls = c.get("planner_calls", 0)
         errs = c.get("parse_errors", 0)
+        spend = None
+        for p in self.providers:
+            t = getattr(p, "totals", None)
+            if t:
+                spend = ({k: spend.get(k, 0) + v for k, v in t.items()}
+                         if spend else dict(t))
+        ticks_done = max(sim.tick, 1)
         return {
             "tick": sim.tick,
             "grid": rows, "W": w.W, "H": w.H,
@@ -273,6 +401,13 @@ class RunManager:
                 "taught": c.get("taught", 0),
                 "discovered": c.get("discovered", {}),
                 "recipes": ALL_RECIPES,
+                "spend": spend,
+                "live": {   # normalized like the baseline, for the comparison panel
+                    "deaths_per_1k": round(c.get("deaths", 0) / ticks_done * 1000, 2),
+                    "completion_pct": round(c.get("plans_completed", 0) / calls * 100, 1) if calls else 0.0,
+                    "gathers_per_100": round(c.get("gathered", 0) / ticks_done * 100, 1),
+                    "recipes_discovered": len(c.get("discovered", {})),
+                },
             },
             "events": list(self.events)[-60:],
         }
@@ -290,6 +425,7 @@ class RunManager:
         with self.prompt_lock:
             out["prompts"] = dict(self.prompt_store)
         out["external"] = self._external_runs()
+        out["baseline"] = self.baseline
         return out
 
     def _external_runs(self) -> list:
@@ -345,6 +481,11 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/api/state":
             self._json(MANAGER.state())
+        elif path == "/api/defaults":
+            self._json({"world": {k: BASE[k] for k in
+                                  sorted(WORLD_INT | WORLD_FLOAT)},
+                        "replan_interval": BASE["replan_interval"],
+                        "presets": PRESETS})
         elif path == "/":
             self._file(STATIC / "index.html")
         else:

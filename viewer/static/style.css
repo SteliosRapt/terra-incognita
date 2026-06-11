@@ -266,3 +266,12 @@ button.custom { border-left: 3px solid var(--phosphor-dim); margin-top: 6px; wid
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #243018; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* vs no-LLM baseline panel */
+.basetable { width: 100%; border-collapse: collapse; font-size: 11px; }
+.basetable th { color: var(--text-dim); font-weight: normal; text-align: right;
+  padding: 2px 4px; }
+.basetable td { padding: 2px 4px; border-top: 1px solid #243018; }
+.basetable td:not(:first-child) { text-align: right; }
+.basetable td:nth-child(2) { color: var(--amber); }
+.basenote { color: var(--text-dim); font-size: 11px; }

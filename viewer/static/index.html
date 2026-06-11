@@ -43,15 +43,24 @@
         <button id="btnAcceptance" class="big accept">ACCEPTANCE RUN<small>gemma4:e2b · blind · 10 × 1000</small></button>
       </div>
       <details id="customRun">
-        <summary>custom parameters</summary>
+        <summary>configure run (defaults = quick start)</summary>
         <div class="form">
-          <label>provider
+          <label>models
+            <select id="fPreset">
+              <option value="local-e2b" selected>local gemma4:e2b (ollama)</option>
+              <option value="openrouter-90-10">openrouter: 90% gemma-4 free / 10% qwen3.6-35b-a3b</option>
+              <option value="mock">mock (no LLM)</option>
+              <option value="custom">custom (provider/model below)</option>
+            </select></label>
+          <label id="rowProvider" class="half hidden">provider
             <select id="fProvider">
               <option value="mock">mock</option>
               <option value="ollama">ollama</option>
               <option value="anthropic">anthropic</option>
+              <option value="openrouter">openrouter</option>
             </select></label>
-          <label>model <input id="fModel" placeholder="(provider default)"></label>
+          <label id="rowModel" class="half hidden">model <input id="fModel" placeholder="(provider default)"
+                              title="openrouter: comma-separated list = fallback chain; empty = configs/openrouter.json"></label>
           <label>condition
             <select id="fCondition">
               <option>blind</option><option>oracle</option>
@@ -61,7 +70,11 @@
           <label class="half">ticks <input id="fTicks" type="number" value="500" min="1"></label>
           <label class="half">seed <input id="fSeed" type="number" value="42"></label>
           <label class="half">name <input id="fName" placeholder="(auto)"></label>
-          <button id="btnCustom" class="big custom">START CUSTOM</button>
+          <details id="mapParams">
+            <summary>map parameters (defaults from engine)</summary>
+            <div class="form" id="worldForm"></div>
+          </details>
+          <button id="btnCustom" class="big custom">START RUN</button>
         </div>
       </details>
       <label class="speed">tick delay <span id="speedVal">0 ms</span>
@@ -72,6 +85,11 @@
     <section class="panel">
       <h2>▸ Discoveries</h2>
       <div id="discoveries" class="chips"></div>
+    </section>
+
+    <section class="panel">
+      <h2>▸ vs no-LLM runs</h2>
+      <div id="baseline"></div>
     </section>
 
     <section class="panel grow">

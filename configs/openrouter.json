@@ -1,0 +1,14 @@
+{
+  "models": [
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free"
+  ],
+  "paid_models": [
+    "qwen/qwen3.6-35b-a3b"
+  ],
+  "temperature": 0.7,
+  "max_tokens": 2048,
+  "timeout": 180.0,
+  "cooldown_s": 65.0,
+  "credit_cooldown_s": 3600.0
+}

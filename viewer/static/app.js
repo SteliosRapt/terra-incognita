@@ -240,12 +240,27 @@ function renderPanels() {
     <span class="ks ${s.parse_rate >= 5 ? "bad" : ""}">PARSE FAIL<b>${s.parse_rate}%</b></span>
     <span class="ks ${s.taught ? "warm" : ""}">TAUGHT<b>${s.taught}</b></span>
     <span class="ks ${nDisc ? "warm" : ""}">DISCOVERED<b>${nDisc}/${s.recipes.length}</b></span>
-    <span class="ks">LLM CALLS<b>${s.planner_calls}</b></span>`);
+    <span class="ks">LLM CALLS<b>${s.planner_calls}</b></span>
+    ${s.spend ? `<span class="ks ${s.spend.rate_limited ? "warm" : ""}">SPEND<b>$${s.spend.cost_usd.toFixed(4)}</b></span>
+    <span class="ks ${s.spend.rate_limited ? "warm" : ""}">RATE-LIMITED<b>${s.spend.rate_limited}</b></span>` : ""}`);
 
   setHTML($("discoveries"), s.recipes.map((r) => {
-    const t = s.discovered[r];
-    return `<span class="chip ${t !== undefined ? "lit" : ""}">${r}${t !== undefined ? " t" + t : ""}</span>`;
+    const d = s.discovered[r];
+    return `<span class="chip ${d ? "lit" : ""}" ${d ? `title="${d.source} by ${d.by} at t${d.tick}"` : ""}>` +
+           `${r}${d ? ` ${d.by} t${d.tick}${d.source === "taught" ? " ✎" : ""}` : ""}</span>`;
   }).join(""));
+
+  const bl = state.baseline;
+  const lv = s.live;
+  setHTML($("baseline"), !bl
+    ? `<div class="basenote">no completed no-LLM runs found in runs/</div>`
+    : `<table class="basetable">
+        <tr><th></th><th>this run</th><th>no-LLM (${bl.runs.length} runs, ${bl.ticks}t)</th></tr>
+        <tr><td>deaths /1k ticks</td><td>${lv.deaths_per_1k}</td><td>${bl.deaths_per_1k}</td></tr>
+        <tr><td>plan completion</td><td>${lv.completion_pct}%</td><td>${bl.completion_pct}%</td></tr>
+        <tr><td>gathers /100 ticks</td><td>${lv.gathers_per_100}</td><td>${bl.gathers_per_100}</td></tr>
+        <tr><td>recipes found</td><td>${lv.recipes_discovered}</td><td>${bl.recipes_discovered}</td></tr>
+      </table>`);
 
   setHTML($("feed"), snap.events.slice().reverse().map(fmtEvent).join(""));
 
@@ -313,7 +328,7 @@ function renderInspector(snap) {
   const pr = (state.prompts || {})[a.id];
   let llm = `<p class="dim">(no planner call recorded yet)</p>`;
   if (pr) {
-    llm = `<p class="kv">t${pr.tick} · attempt ${pr.attempt} · ${pr.ms} ms ·
+    llm = `<p class="kv">t${pr.tick} · attempt ${pr.attempt} · ${pr.ms} ms${pr.model ? ` · ${esc(pr.model)}` : ""} ·
       ${pr.ok ? `<span class="ok">parsed ok</span>` : `<span class="fail">${esc(pr.error)}</span>`}</p>
       <details data-k="prompt"><summary>prompt (what the model saw)</summary><pre>${esc(pr.system)}\n\n${esc(pr.prompt)}</pre></details>
       <details data-k="response"><summary>raw response</summary><pre>${esc(pr.response || "(no response)")}</pre></details>`;
@@ -349,19 +364,42 @@ function fmtStep(s) {
 
 /* ------------------------------------------------------------- controls */
 $("btnMock").onclick = () =>
-  post("/api/start", { provider: "mock", condition: "blind", agents: 10,
+  post("/api/start", { preset: "mock", condition: "blind", agents: 10,
                        ticks: 300, seed: 42, tick_delay: 0.12 });
 $("btnAcceptance").onclick = () =>
-  post("/api/start", { provider: "ollama", model: "gemma4:e2b", condition: "blind",
+  post("/api/start", { preset: "local-e2b", condition: "blind",
                        agents: 10, ticks: 1000, seed: 42,
                        name: "m3_accept_ui_" + new Date().toISOString().slice(11, 19).replaceAll(":", "") });
-$("btnCustom").onclick = () =>
+
+/* defaults-first configurator: map fields are filled from /api/defaults and
+   only sent back if the user changed them */
+let WORLD_DEFAULTS = {};
+fetch("/api/defaults").then((r) => r.json()).then((d) => {
+  WORLD_DEFAULTS = d.world;
+  $("worldForm").innerHTML = Object.entries(d.world).map(([k, v]) =>
+    `<label class="half">${k.replaceAll("_", " ")}
+       <input class="wparam" data-key="${k}" type="number"
+              value="${v}" step="${Number.isInteger(v) ? 1 : 0.01}"></label>`).join("");
+});
+$("fPreset").onchange = () => {
+  const custom = $("fPreset").value === "custom";
+  $("rowProvider").classList.toggle("hidden", !custom);
+  $("rowModel").classList.toggle("hidden", !custom);
+};
+$("btnCustom").onclick = () => {
+  const world = {};
+  for (const inp of document.querySelectorAll("#worldForm .wparam")) {
+    if (+inp.value !== WORLD_DEFAULTS[inp.dataset.key]) world[inp.dataset.key] = +inp.value;
+  }
   post("/api/start", {
+    preset: $("fPreset").value,
     provider: $("fProvider").value, model: $("fModel").value || null,
     condition: $("fCondition").value, agents: +$("fAgents").value,
     ticks: +$("fTicks").value, seed: +$("fSeed").value,
     name: $("fName").value || null,
+    world,
   });
+};
 $("btnPause").onclick = () => post("/api/pause");
 $("btnResume").onclick = () => post("/api/resume");
 $("btnStop").onclick = () => post("/api/stop");

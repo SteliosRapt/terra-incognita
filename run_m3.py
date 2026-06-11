@@ -5,6 +5,9 @@ Examples:
   python run_m3.py --provider ollama --model qwen2.5:7b \
                    --condition blind --agents 10 --ticks 1000  # the overnight run
   python run_m3.py --provider anthropic --model claude-haiku-4-5 --ticks 500
+  python run_m3.py --provider openrouter --ticks 500   # chain from configs/openrouter.json
+  python run_m3.py --provider openrouter \
+                   --model "meta-llama/llama-3.3-70b-instruct:free,openai/gpt-oss-120b:free"
 """
 import argparse, json, pathlib, sys
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -48,8 +51,10 @@ def summarize(run_dir: pathlib.Path) -> str:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--provider", choices=["mock", "ollama", "anthropic"], default="mock")
-    p.add_argument("--model", default=None, help="backend model id")
+    p.add_argument("--provider", choices=["mock", "ollama", "anthropic", "openrouter"],
+                   default="mock")
+    p.add_argument("--model", default=None,
+                   help="backend model id (openrouter: comma list = fallback chain)")
     p.add_argument("--host", default=None, help="ollama host override")
     p.add_argument("--condition", default="blind",
                    choices=["blind", "oracle", "fragmented", "one_expert"])
@@ -74,10 +79,17 @@ def main():
         spec["model"] = args.model
     if args.host and args.provider == "ollama":
         spec["host"] = args.host
+    if args.provider == "openrouter":
+        spec["cost_path"] = str(run_dir / "costs.jsonl")
+
+    # ONE provider shared by all brains: rate-limit cooldowns and the spend
+    # ledger must be global, not per-agent.
+    shared = {}
 
     def factory(rng):
-        return LLMPlannerBrain(make_provider(spec, rng),
-                               telemetry_path=str(telemetry))
+        if "provider" not in shared:
+            shared["provider"] = make_provider(spec, rng)
+        return LLMPlannerBrain(shared["provider"], telemetry_path=str(telemetry))
 
     sim = Simulation(cfg, factory, str(run_dir))
     print(f"run {name}: {args.agents} agents x {args.ticks} ticks, "
@@ -97,6 +109,11 @@ def main():
     with open(run_dir / "config.json", "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
     print("\n" + summarize(run_dir))
+    totals = getattr(shared.get("provider"), "totals", None)
+    if totals:
+        print(f"spend: {totals['calls']} calls | "
+              f"{totals['prompt_tokens']} in / {totals['completion_tokens']} out tokens | "
+              f"${totals['cost_usd']:.4f} | rate-limit hits {totals['rate_limited']}")
 
 
 if __name__ == "__main__":
