@@ -127,6 +127,16 @@ def test_parse_valid_response():
     assert res.updated_notes == "n"
 
 
+def test_parse_keeps_gather_target():
+    """Regression (v0.32 smoke run): the validator stripped x/y from gather
+    steps, turning every targeted gather into 'no wood here'."""
+    raw = '{"reasoning": "r", "plan": [{"action": "gather", "resource": "wood", "x": 5, "y": "7"}]}'
+    assert parse_response(raw).plan == [
+        {"action": "gather", "resource": "wood", "x": 5, "y": 7}]
+    raw = '{"reasoning": "r", "plan": [{"action": "gather", "resource": "wood"}]}'
+    assert parse_response(raw).plan == [{"action": "gather", "resource": "wood"}]
+
+
 def test_parse_accepts_fenced_json_and_coerces_string_ints():
     raw = '```json\n{"reasoning": "r", "plan": [{"action": "move_to", "x": "3", "y": "4"}]}\n```'
     res = parse_response(raw)

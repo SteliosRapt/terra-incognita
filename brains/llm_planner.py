@@ -126,7 +126,13 @@ def _validate_step(step) -> dict:
         res = step.get("resource")
         if res not in RESOURCES:
             raise ValueError(f"gather: unknown resource {res!r}")
-        return {"action": "gather", "resource": res}
+        out = {"action": "gather", "resource": res}
+        # optional walk-to target (engine treats targeted gather as one
+        # multi-tick primitive) — dropping these was the v0.32 smoke-run bug:
+        # 795/795 model gathers carried x/y and all died "no wood here"
+        if step.get("x") is not None and step.get("y") is not None:
+            out["x"], out["y"] = _int(step["x"]), _int(step["y"])
+        return out
     if kind == "eat":
         return {"action": "eat", "item": str(step.get("item", "berries"))}
     if kind == "combine":
