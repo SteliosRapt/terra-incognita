@@ -106,9 +106,11 @@ class Simulation:
         # 1. WORLD PHASE
         evs += self.world.world_phase(self.tick)
 
-        # 2. AGENT PHASE — randomized but seeded order
+        # 2a. UPKEEP — randomized but seeded order: metabolism, spoilage,
+        # replan triggers, reflexes. Decides who needs the planner this tick.
         order = sorted(self.agents.keys())
         self.rng.shuffle(order)
+        to_plan: list[tuple[str, str]] = []   # (agent, trigger)
         for name in order:
             ag = self.agents[name]
             if not ag.alive:
@@ -142,10 +144,30 @@ class Simulation:
                 elif ag.inventory.get("berries", 0) > 0:
                     ag.plan = [{"action": "eat", "item": "berries"}]
                     ag.intention = "reflex: eat"
-            # (re)plan if queue empty
             if not ag.plan:
-                obs = self.build_observation(ag)
-                res = self.brains[name].plan(obs)
+                to_plan.append((name, trigger))
+
+        # 2b. PLANNING — all observations snapshot the same post-upkeep world
+        # (simultaneous decisions). Brains that declare parallel_safe (network
+        # LLM providers) are called concurrently: with 10 agents on a ~10s
+        # remote model this is the difference between ~100s and ~10s per tick.
+        if to_plan:
+            obs = {name: self.build_observation(self.agents[name])
+                   for name, _ in to_plan}
+            names = [name for name, _ in to_plan]
+            if (len(names) > 1
+                    and all(getattr(self.brains[n], "parallel_safe", False)
+                            for n in names)):
+                from concurrent.futures import ThreadPoolExecutor
+                workers = min(len(names), self.cfg.get("llm_workers", 8))
+                with ThreadPoolExecutor(max_workers=workers) as ex:
+                    results = dict(zip(names, ex.map(
+                        lambda n: self.brains[n].plan(obs[n]), names)))
+            else:
+                results = {n: self.brains[n].plan(obs[n]) for n in names}
+            for name, trigger in to_plan:
+                ag = self.agents[name]
+                res = results[name]
                 ag.plan, ag.intention = res.plan, res.intention
                 # mind-owned fields written back verbatim (engine never reads them)
                 if res.updated_beliefs is not None:
@@ -158,7 +180,12 @@ class Simulation:
                 evs.append(Event(self.tick, "planner_called", actor=name,
                                  payload={"intention": ag.intention,
                                           "trigger": trigger}))
-            # execute head of plan
+
+        # 2c. EXECUTION — same seeded order
+        for name in order:
+            ag = self.agents[name]
+            if not ag.alive:
+                continue
             if ag.plan:
                 done, aevs = actions.apply(ag.plan[0], ag, self.world, self.tick,
                                            self.agents)
@@ -187,7 +214,12 @@ class Simulation:
         for ev in evs:
             if ev.type in system_types:
                 ev.visibility = [ev.actor] if ev.actor else []
-                if ev.type in ("spoiled", "recipe_learned") and ev.actor:
+                # plan_interrupted IS journaled (v0.32, deviating from spec
+                # §3b): without the failure reason in context, models repeat
+                # the same broken step forever — measured 459/475 plans dying
+                # on identical "no wood here" mistakes in m3 runs.
+                if ev.type in ("spoiled", "recipe_learned",
+                               "plan_interrupted") and ev.actor:
                     self.agents[ev.actor].journal_add(
                         f"[t{ev.tick}] " + render_for_journal(ev, ev.actor))
             else:

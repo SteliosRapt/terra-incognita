@@ -54,6 +54,21 @@ def _tool_mult(ag, world, resource: int) -> int:
 
 def _gather(a, ag, world, tick):
     res = a["resource"]
+    # optional target: walk there first (Tier B pathfinding, one step per tick).
+    # This makes "gather wood from (7, 27)" a single multi-tick primitive —
+    # the shape every model assumes gather has (measured in m3 runs: 430/480
+    # plans started with an untargeted gather on a bare tile and died).
+    if a.get("x") is not None and a.get("y") is not None:
+        tx, ty = a["x"] % world.W, a["y"] % world.H
+        if ag.pos != (tx, ty):
+            nxt = world.next_step(ag.pos, (tx, ty))
+            if nxt is None:
+                return True, [Event(tick, "plan_interrupted", actor=ag.id,
+                                    position=ag.pos,
+                                    payload={"reason": f"gather: ({tx}, {ty}) unreachable"})]
+            ag.x, ag.y = nxt
+            ag.energy -= (ENERGY_MOVE - ENERGY_IDLE)
+            return False, []  # still traveling
     t = world.tile(ag.x, ag.y)
     evs = []
     got = 0

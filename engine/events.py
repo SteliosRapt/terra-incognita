@@ -72,6 +72,8 @@ def render_for_journal(ev: Event, viewer_id: str) -> str:
         return f"{who} took {p['qty']} {p['item']} from the storehouse."
     if t == "spoiled":
         return f"{p['qty']} of your berries rotted away."
+    if t == "plan_interrupted":
+        return f"Your plan stopped: {p.get('reason', 'unknown')}."
     if t == "energy_critical":
         return f"{who} look{'s' if not you else ''} exhausted and weak."
     if t == "agent_died":

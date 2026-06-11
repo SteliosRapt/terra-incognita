@@ -9,16 +9,25 @@ Every provider call is appended to prompts.jsonl.
 from __future__ import annotations
 import json
 import re
+import threading
 import time
 
 from .base import Observation, PlanResult
 from .providers import Provider
 
+# Survival basics are COMMON knowledge (spec §1: "Eating berries: +25 energy");
+# only the tech tree is hidden. Withholding them produced agents that starved
+# while mining stone (m3 runs), which measures confusion, not discovery.
 SYSTEM_TEMPLATE = (
-    "You are {name}, a survivor in an unknown world. You do not know how this "
-    "world works. You can discover how to create things by combining items "
-    "(action: combine), but failures may destroy ingredients. You can talk to "
-    "nearby agents. Your goals: survive, and understand this world."
+    "You are {name}, a survivor in an unknown world. Basic facts you know: "
+    "your energy drains every tick (more when moving) and at 0 energy you "
+    "die, permanently. Berries are food — eat(berries) restores 25 energy. "
+    "Wood and stone are materials, not food. You must stand on a tile to "
+    "gather from it; give gather a target x, y and you will walk there "
+    "first. Beyond that you do NOT know how this world works. You can "
+    "discover how to create things by combining items (action: combine), "
+    "but failures may destroy ingredients. You can talk to nearby agents. "
+    "Your goals: survive, and understand this world."
 )
 
 NOTES_CAP = 1500          # spec: ~1500 chars (open question 3 — revisit with transcripts)
@@ -29,18 +38,24 @@ MESSAGE_CAP = 300
 RESOURCES = ("berries", "wood", "stone")
 
 ACTIONS_DOC = (
-    "move_to(x, y) | gather(resource: berries/wood/stone) | eat(item) | "
+    "move_to(x, y) | gather(resource: berries/wood/stone, x, y — walks to "
+    "(x, y) then gathers; omit x/y to gather where you stand) | eat(item) | "
     'combine(items: {"item": qty, ...}) | say(target, message) | '
     "give(target, item, qty) | drop(item, qty) | wait"
 )
 
 FORMAT_DOC = (
+    "Plan several steps ahead (up to 20): you will not be consulted again "
+    "until the plan finishes, a step fails, or many ticks pass, and each "
+    "consultation costs you time. One gather collects from one tile; to "
+    "collect several, gather at several positions.\n"
     "Respond ONLY with a JSON object, no other text:\n"
     '{"reasoning": "<one short sentence: what you are doing and why>",\n'
     ' "updated_beliefs": ["<your current hypotheses about how this world works>", ...],\n'
     ' "updated_notes": "<your private scratchpad, rewritten in full, max 1500 chars>",\n'
-    ' "plan": [{"action": "move_to", "x": 3, "y": 4},\n'
-    '          {"action": "gather", "resource": "wood"},\n'
+    ' "plan": [{"action": "gather", "resource": "wood", "x": 3, "y": 4},\n'
+    '          {"action": "gather", "resource": "wood", "x": 4, "y": 4},\n'
+    '          {"action": "move_to", "x": 6, "y": 5},\n'
     '          {"action": "combine", "items": {"wood": 2, "stone": 1}}]}'
 )
 
@@ -158,6 +173,10 @@ def parse_response(raw: str) -> PlanResult:
 
 
 # ---------------------------------------------------------------- brain
+# brains share one prompts.jsonl per run; serialize appends across planner threads
+_telemetry_lock = threading.Lock()
+
+
 class LLMPlannerBrain:
     """Tier A planner. Tier B execution (pathfinding, reflexes) stays in the
     engine; this class only turns an Observation into a PlanResult."""
@@ -167,6 +186,8 @@ class LLMPlannerBrain:
         self.provider = provider
         self.telemetry_path = telemetry_path
         self.persona = persona
+        # sim.py fans planning out to threads only when every brain opts in
+        self.parallel_safe = getattr(provider, "parallel_safe", False)
 
     def plan(self, obs: Observation) -> PlanResult:
         system, user = build_prompt(obs, self.persona)
@@ -198,5 +219,6 @@ class LLMPlannerBrain:
         rec = {"tick": obs.tick, "agent": obs.me["id"], "attempt": attempt,
                "provider": self.provider.name, "ms": ms, "ok": err is None,
                "error": err, "system": system, "user": user, "response": raw}
-        with open(self.telemetry_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        with _telemetry_lock:
+            with open(self.telemetry_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
