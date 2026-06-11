@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terra Incognita — Field Station</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="crt"></div>
+
+<header>
+  <div class="brand">
+    <h1>TERRA&nbsp;INCOGNITA</h1>
+  </div>
+  <span id="statusPill" class="pill idle">IDLE</span>
+  <span id="runName" class="runname">no run loaded</span>
+  <div class="transport">
+    <button id="btnPause" disabled>❚❚ PAUSE</button>
+    <button id="btnResume" disabled>▶ RESUME</button>
+    <button id="btnStop" disabled>■ STOP</button>
+  </div>
+</header>
+
+<div id="hud">
+  <div id="progress"><i id="progFill"></i><span id="progText">no run</span></div>
+  <div id="keyStats"></div>
+</div>
+
+<div id="externalBanner" class="banner hidden"></div>
+<div id="errorBanner" class="banner err hidden"></div>
+
+<main>
+  <!-- ------------------------------------------------ left: control deck -->
+  <aside id="deck">
+    <section class="panel">
+      <h2>▸ Run Control</h2>
+      <div class="presets">
+        <button id="btnMock" class="big mock">MOCK PREVIEW<small>10 agents · 300 ticks · fast</small></button>
+        <button id="btnAcceptance" class="big accept">ACCEPTANCE RUN<small>gemma4:e2b · blind · 10 × 1000</small></button>
+      </div>
+      <details id="customRun">
+        <summary>custom parameters</summary>
+        <div class="form">
+          <label>provider
+            <select id="fProvider">
+              <option value="mock">mock</option>
+              <option value="ollama">ollama</option>
+              <option value="anthropic">anthropic</option>
+            </select></label>
+          <label>model <input id="fModel" placeholder="(provider default)"></label>
+          <label>condition
+            <select id="fCondition">
+              <option>blind</option><option>oracle</option>
+              <option>fragmented</option><option>one_expert</option>
+            </select></label>
+          <label class="half">agents <input id="fAgents" type="number" value="10" min="1" max="12"></label>
+          <label class="half">ticks <input id="fTicks" type="number" value="500" min="1"></label>
+          <label class="half">seed <input id="fSeed" type="number" value="42"></label>
+          <label class="half">name <input id="fName" placeholder="(auto)"></label>
+          <button id="btnCustom" class="big custom">START CUSTOM</button>
+        </div>
+      </details>
+      <label class="speed">tick delay <span id="speedVal">0 ms</span>
+        <input id="speed" type="range" min="0" max="1000" step="20" value="0">
+      </label>
+    </section>
+
+    <section class="panel">
+      <h2>▸ Discoveries</h2>
+      <div id="discoveries" class="chips"></div>
+    </section>
+
+    <section class="panel grow">
+      <h2>▸ Event Feed</h2>
+      <div id="feed"></div>
+    </section>
+  </aside>
+
+  <!-- ------------------------------------------------ center: the world -->
+  <section id="worldwrap">
+    <div id="mapframe">
+      <canvas id="map" width="512" height="512"></canvas>
+      <div id="tooltip" class="hidden"></div>
+    </div>
+    <div id="legend"></div>
+  </section>
+
+  <!-- ------------------------------------------------ right: minds -->
+  <aside id="minds">
+    <section class="panel">
+      <h2>▸ Agents</h2>
+      <div id="agentCards"></div>
+    </section>
+    <section class="panel grow" id="inspectorPanel">
+      <h2>▸ Inspector <span id="inspId" class="insp-id"></span></h2>
+      <div id="inspector"><p class="dim">select an agent on the map or in the list</p></div>
+    </section>
+  </aside>
+</main>
+
+<script src="sprites.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

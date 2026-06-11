@@ -1,0 +1,15 @@
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# experiment artifacts (event logs + prompt telemetry can be large; data
+# lives locally, results are summarized in CHANGELOG.md)
+runs/
+
+# local-only files unrelated to the project
+scratch/
+
+# tooling
+.playwright-mcp/
+.claude/

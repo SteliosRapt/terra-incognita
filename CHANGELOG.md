@@ -1,0 +1,189 @@
+# CHANGELOG / Design Notes
+
+## v0.31 — Field Station: live viewer (2026-06-11)
+**Added:** `viewer/server.py` + `viewer/static/` — a live dashboard
+(`py viewer/server.py`, http://127.0.0.1:8787). Stdlib-only HTTP server runs a
+Simulation in a worker thread; browser polls /api/state. Start runs from the
+UI (mock preview / the gemma4:e2b acceptance run / custom params), pause /
+resume / stop, tick-delay slider. Canvas world map with hand-drawn 16×16 pixel
+sprites; click an agent for the inspector: energy, inventory, tools, plan
+queue (current step marked), intention, beliefs, notes, journal, knowledge,
+heard-of recipes, and the agent's last raw LLM prompt + response. Colony
+stats, discovery tracker, live event feed.
+
+**Engine untouched:** events are captured by teeing the sim's events.jsonl
+file object (which also means live runs now flush per event); per-agent
+prompts captured by subclassing `LLMPlannerBrain._log`. Beliefs/notes are read
+for display only — the viewer is measurement, like the event log.
+
+**Note:** the first CLI overnight acceptance run (m3_gemma_blind_s42) died
+silently at ~t10 (process killed hard, no traceback; runs/ dir is a useless
+partial). Acceptance run to be relaunched from the UI.
+
+## v0.3 — M3: Minds
+**Added:** `brains/llm_planner.py` (build_prompt with the spec §3 sections
+STATUS / YOU KNOW / YOU BELIEVE / NOTES / NEARBY / RECENT EVENTS / ACTIONS;
+strict JSON parsing — one retry quoting the error back, then plan=[wait] +
+`planner_parse_error` event); `brains/providers.py` (ollama / anthropic behind
+one `complete(system, user) -> str` interface, lazy imports so the repo stays
+LLM-free, plus a deterministic `MockProvider` that answers by parsing the
+rendered prompt — doubling as a check the prompt carries actionable info);
+`prompts.jsonl` telemetry (full prompt/response pairs per call); `say` and
+`give` actions; knowledge conditions (blind / oracle / fragmented / one_expert)
+injected into `agent.knowledge` at init; `run_m3.py` runner; `test_m3.py`
+(23 tests, no LLM calls ever).
+
+**Brain interface formalized:** `brains/base.py` — `Brain.plan(Observation) ->
+PlanResult(plan, intention, updated_beliefs, updated_notes, parse_error)`.
+The engine writes beliefs/notes back verbatim and never reads them; Observation
+gained standing_on, slots, nearby structures, rendered known recipes, beliefs,
+notes. Scripted brains updated to the same contract.
+
+**Replan triggers (spec §3) now real:** plan finished, plan step failed
+(plan_interrupted now CLEARS the rest of the plan — previously the engine
+blindly executed the remaining steps), directed speech (`said` with target=me
+sets a replan flag), and a forced replan every `replan_interval` (default 15)
+ticks. `planner_called` logs which trigger fired.
+
+**Speech (decided, open question 4):** `say` is a normal primitive — it
+occupies the agent's action for the tick (economy of words). Radius 3
+visibility per spec §3b; engine never validates content, so lying works.
+
+**Taught vs discovered without reading the mind:** the engine scans heard
+`said` messages for recipe-id mentions (word-boundary match) into an
+engine-owned `heard_recipes` set per agent; first craft of a recipe the agent
+has heard named → `recipe_learned source=taught`. Pure measurement — no world
+logic reads it. The mock smoke run already shows the full chain working
+(say "…axe…" → neighbor crafts → taught).
+
+**Config knobs added:** `vis_radius`, `say_radius`, `replan_interval`,
+`knowledge_condition`. Providers: ollama default qwen2.5:7b (json format
+forced); anthropic default claude-haiku-4-5 per spec §3 cost plan.
+
+**Acceptance so far (mock provider — real Ollama overnight run still TODO):**
+- 8 agents x 300 ticks, mock: 744 planner calls, 0 parse failures, 3 deaths,
+  axe@t11, 3 recipes learned with source=taught. Determinism with mock brains:
+  byte-identical logs (tested).
+- test_m3.py: 23/23. test_chain.py: 9/9 (unchanged semantics).
+- M2 baseline re-run under the new engine (clear-on-interrupt + forced replans
+  shift the numbers slightly, same picture): deaths 5–6/12, tier 1 + accidental
+  fire found, farm/cooked/storehouse never, determinism PASS.
+
+**Note:** repo paths de-hardcoded (`/home/claude/terra` → relative to repo
+root) in run_m1/run_m2/test_chain/techtree smoke tests.
+
+**Windows fix (2026-06-11):** all text-mode `open()` calls in the M3 path
+(events.jsonl, prompts.jsonl, config.json) now pass `encoding="utf-8"` —
+Windows defaults to the system codepage (cp1253 here), which crashed telemetry
+writes the first time gemma4:e2b emitted a non-Latin character. Found by a
+30-tick real-model pretest.
+
+**Acceptance run model (2026-06-11):** gemma4:e2b via Ollama (qwen2.5:7b not
+pulled on this machine). 30-tick pretest: 247 planner calls, 2.4% parse
+failure (under the 5% bar; gemma flubs JSON on ~7% of first attempts — cut-off
+strings, stray tokens after the object — and the single retry recovers about
+half), 0 deaths, no crash. ~25 s/tick early on ⇒ 1000 ticks ≈ overnight.
+
+## v0.2 — M2: Technology exists
+**Added:** `combine` wired into the action layer (uses the tested tech-tree
+resolver); structures live on the world (Fire expires after 100 ticks, Farm
+yields 3 berries/10 ticks harvestable by anyone, Storehouse = 200 shared units
++ deposit/withdraw); tool effects (axe x3 wood, pickaxe x3 stone, basket +8
+slots); cooked_food (+50 energy, never spoils); `RandomScientistBrain`
+(forages, then tries random small-quantity combos when energy >= 60).
+Storehouse contents do NOT spoil (granary — decided).
+
+**Journal privacy honored:** observers of a craft see "A03 made something: a
+fire." — never the ingredients. Failure feedback text is actor-only.
+
+**Emergent rule discovered by the chain test:** since 1 wood + 2 stone on grass
+always resolves to FIRE (condition-specific recipes win), a pickaxe *cannot be
+crafted on grass*. Crafting location matters — a workshop mechanic we never
+designed. Kept deliberately: it is exactly the kind of non-obvious physics the
+project studies.
+
+**Acceptance results:**
+- Full chain gather->axe->fire->cooked_food->farm->pickaxe->storehouse:
+  REACHABLE (test_chain.py, 9/9).
+- Random baseline (12 agents x 1000 ticks x 3 seeds): tier 1 usually found
+  (axe 3/3 seeds, pickaxe 2/3, basket 3/3), fire 3/3 (always by accident on
+  grass), farm 1/3 (once, at t992), cooked_food 0/3, storehouse 0/3.
+  ~135-235 combine attempts per run, 4-6% success rate.
+- Mortality: 5-10 of 12 random scientists die per run (vs 2 for pure foragers).
+  Blind experimentation is *expensive*: materials wasted, foraging time lost.
+  This is a feature — knowledge has measurable survival value in this world —
+  and gives M3 two-dimensional headroom: LLM agents should discover MORE while
+  dying LESS. If they do neither, that is a publishable negative result.
+- Determinism: PASS (byte-identical logs, seed 42).
+
+**M3 baseline numbers to beat:** tier-2+ discovery beyond accidental fire is
+effectively out of reach for blind luck (farm 1/3 late, cooked never), and
+>=40% population death. Any competent mind should clear both bars.
+
+## v0.12 — Food pressure: berry spoilage (current)
+**Change:** Each berry in an agent's inventory has a per-tick spoil probability
+(`berry_spoil_prob`, default 0.02 ⇒ expected shelf life ≈ 50 ticks). Spoiled
+berries vanish with a `spoiled` event (visible only to the owner).
+
+**Why:** v0.11 showed unlimited hoarding (agents at 30–40 berries). Tuning bush
+counts/refresh rates against *scripted* foragers would be miscalibrated anyway —
+LLM agents in M3 will have competing demands (wood, stone, experimentation,
+talking), so the same food supply will feel scarcer to them. Spoilage is robust
+to that: it bounds the useful stockpile regardless of how busy agents are, and
+keeps food a *recurring errand* rather than a solved problem.
+It also retroactively gives the tech tree its economy: cooked_food
+(`spoils: false`) is now a real invention — food security — rather than a
+numeric upgrade. Storehouse may later halt spoilage (decide at M2).
+
+**Calibration principle (instead of "optimal berries"):** target a *food-work
+fraction* — the share of an agent's ticks spent acquiring/eating food — of
+roughly 25–35% pre-technology. Measured from the event log (forage-intention
+planner calls + gather/eat events). Calibrate roughly now with scripted agents,
+**recalibrate at M3 with real LLM agents**, and report the achieved fraction in
+any paper (reviewers will ask how harsh the world was).
+
+**Observed effect (seed 42, 500 ticks, 12 agents, spoil_prob=0.02):** end
+inventories dropped from 15–40 berries to 0–7. **Two agents died** — the first
+deaths in any run. Food economy: 686 gathered, 330 eaten, 334 spoiled — a 49%
+waste rate, because the scripted ForagerBrain still hoards and spoilage
+punishes hoarding. That's the interesting part: spoilage converts hoarding from
+a neutral quirk into a *failing strategy*, which a scripted brain cannot adapt
+to but an LLM brain could — giving us a concrete, measurable adaptation gap to
+look for at M3 (do LLM societies discover just-in-time foraging?). Gather
+actions alone = 11% of agent-ticks; with travel, food work is plausibly ~30%,
+inside the target band. Determinism preserved.
+**Open tuning note:** 0.02 may be slightly harsh for the dumb baseline (2/12
+deaths); acceptable since M3 minds should beat it. If LLM agents also die en
+masse, lower to 0.01 before blaming the models.
+
+**Eating (decided):** dual-mode. Reflex auto-eat below energy 30 stays (engine-
+level survival floor — a confused LLM holding food never starves). Planned
+`eat` also stays, so minds can eat strategically (top up before a long trip).
+Plans do NOT need a mandatory food-gather step; spoilage + metabolism produce
+that pressure organically, which is better science than hard-coding behavior.
+
+## v0.11 — Geography is real: water + organic regions
+**Change:** (1) Region-growth map generation (seed a tile, repeatedly convert a
+random grass neighbor) replaced independent blob scattering → connected,
+organically shaped forests, mountain ranges, lakes. Lakes generate first so
+land shapes around them. (2) Water terrain: impassable, no thirst mechanic
+(terrain, not biology — a second survival meter would confound every metric).
+(3) Greedy movement replaced by BFS pathfinding (deterministic neighbor order)
+— required, since concave shores trap greedy walkers.
+
+**Observed effect — a lesson in coupled systems:** adding water made hoarding
+*worse* (several agents hit 30–40 berries vs ~5–29 in v0.1). Mechanism: water
+removed ~10% of land while berry-patch count stayed constant ⇒ higher resource
+density per capita near surviving patches ⇒ foragers camp and stuff their bags.
+A "cosmetic" geography change shifted behavior through resource density.
+**Methodological consequence:** experiment conditions must be compared on
+identical map seeds, or geography becomes a confound. Map seed is a controlled
+variable from now on, reported with every result.
+
+## v0.1 — M1 baseline
+32×32 toroidal grid; berries/wood/stone; energy metabolism (-1 idle, -2 moving,
+death at 0, reflex eat <30); slot inventory (8 slots × 5 units); plan-queue
+agents (sense → plan → act-blindly → interrupt/finish → sense); event sourcing
+to JSONL with visibility-radius journal fan-out; scripted ForagerBrain;
+determinism acceptance test (byte-identical logs on same seed) — PASS.
+Known quirk: unbounded berry hoarding (fixed in v0.12).

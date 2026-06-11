@@ -1,0 +1,81 @@
+{
+  "version": "0.1",
+  "comment": "Ground-truth technology tree. NEVER shown to agents except in the 'oracle' condition. All conditions are AND-ed.",
+  "recipes": [
+    {
+      "id": "axe",
+      "ingredients": {"wood": 2, "stone": 1},
+      "conditions": {},
+      "produces": {"type": "tool", "item": "axe"},
+      "effects": {"gather_multiplier": {"wood": 3}},
+      "feedback_success": "You created an AXE! It feels sturdy.",
+      "tier": 1
+    },
+    {
+      "id": "pickaxe",
+      "ingredients": {"wood": 1, "stone": 2},
+      "conditions": {},
+      "produces": {"type": "tool", "item": "pickaxe"},
+      "effects": {"gather_multiplier": {"stone": 3}},
+      "feedback_success": "You created a PICKAXE!",
+      "tier": 1
+    },
+    {
+      "id": "basket",
+      "ingredients": {"wood": 3},
+      "conditions": {},
+      "produces": {"type": "tool", "item": "basket"},
+      "effects": {"inventory_bonus": 8},
+      "feedback_success": "You wove a BASKET. You can carry more now.",
+      "tier": 1
+    },
+    {
+      "id": "fire",
+      "ingredients": {"wood": 1, "stone": 2},
+      "conditions": {"tile_type": "grass"},
+      "produces": {"type": "structure", "item": "fire", "lifetime_ticks": 100},
+      "effects": {},
+      "feedback_success": "Sparks catch the dry grass — you created a FIRE!",
+      "tier": 2,
+      "comment": "Same ingredients as pickaxe except quantity context; tile condition makes it non-obvious. Conflict note: fire = 1w+2s on grass, pickaxe = 1w+2s elsewhere. Resolution order: condition-specific recipes match FIRST."
+    },
+    {
+      "id": "farm",
+      "ingredients": {"wood": 4, "berries": 2},
+      "conditions": {"requires_tool": "axe", "tile_type": "grass"},
+      "produces": {"type": "structure", "item": "farm"},
+      "effects": {"yields": {"item": "berries", "amount": 3, "every_ticks": 10}},
+      "feedback_success": "You tilled the land and planted seeds — a FARM!",
+      "tier": 2
+    },
+    {
+      "id": "cooked_food",
+      "ingredients": {"berries": 1},
+      "conditions": {"adjacent_structure": "fire"},
+      "produces": {"type": "item", "item": "cooked_food"},
+      "effects": {"food_energy": 50, "spoils": false},
+      "feedback_success": "You roasted the berries. They smell wonderful.",
+      "tier": 3
+    },
+    {
+      "id": "storehouse",
+      "ingredients": {"wood": 6, "stone": 4},
+      "conditions": {"requires_tool": "pickaxe"},
+      "produces": {"type": "structure", "item": "storehouse"},
+      "effects": {"shared_storage_slots": 40},
+      "feedback_success": "You built a STOREHOUSE. Anyone can use it.",
+      "tier": 3
+    }
+  ],
+  "failure_feedback": {
+    "verbosity": "low",
+    "comment": "Experimental knob. low = 'Nothing happened. The materials were wasted.' medium = adds a directional hint ('the stones sparked but nothing caught'). high = names the missing condition. v0 default: low.",
+    "messages": {
+      "low": "Nothing happened. The materials crumbled uselessly.",
+      "medium_near_miss": "Something almost happened — {hint} — but it fell apart.",
+      "high": "This combination needs: {missing_condition}."
+    },
+    "near_miss_definition": "correct ingredients, wrong condition"
+  },
+  "failure_cost": 1.0
+}
