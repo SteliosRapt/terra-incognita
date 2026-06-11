@@ -1,5 +1,49 @@
 # CHANGELOG / Design Notes
 
+## v0.36 — Field station v2: one tabbed console, named agents, replay (2026-06-11)
+**Layout:** the two side columns are gone. One rounded console card on the
+right, drag-resizable (splitter, persisted), with browser-style tabs:
+**base** (mini agent cards + discoveries + key numbers + highlights),
+**agents** (portrait, energy, Minecraft-style inventory slot grid, beliefs,
+dropdowns for plan/knows/notes/journal/last LLM call), **events** (full feed,
+per-agent colors on every row, agent-chip + category filters: social/gather/
+craft/trouble/planner), **stats** (latency avg/p50/p95 from planner calls,
+calls-per-tick + gathers-per-tick sparklines, gathered-by-resource, spend,
+baseline table, walk heatmap), **replay**, **run** (setup moved here),
+**files** (runs/ browser), **about** (purpose, prompt contract, tools, plans,
+roadmap). Trails/heat are toggleable overlays on the main map.
+
+**Named agents:** `cfg["agent_names"]` — names ARE the agent ids, so they
+flow into prompts ("You are Hild, …"), say/give targets, events.jsonl and
+journals natively; engine validates uniqueness. Editable in the run tab
+before start (server sanitizes to `[A-Za-z0-9_-]{1,14}`). Default roster
+Asha…Lumi. Engine change is 4 lines in sim.__init__; A00-format remains the
+default for CLI runs.
+
+**Replay:** a tab that never touches the live run. Server rebuilds the
+initial world + spawn positions deterministically from config.json (same rng
+sequence as Simulation.__init__) and ships the full event list
+(/api/replay?run=…); the client reconstructs any tick — tiles from
+depleted/regrown, structures from built/expired, agents from every
+positioned event. Selecting the tab takes over the BIG center canvas with an
+amber REPLAY frame; leaving snaps back to live. Works on pre-rename runs
+(A00 ids). KNOWN LIMIT: targeted-gather travel emits no moved events
+(actions.py returns False, [] while walking), so a traveling agent holds its
+last evented tile until arrival — measured 5/10 agents a few tiles short at
+the final tick of a 120t mock run, exact everywhere an event exists. Fixing
+it would add moved events to observers' journals (= prompt change), so it
+stays until a deliberate engine rev.
+
+**Durable run record:** runs/<name>/summary.json written at run end —
+outcome, ticks, duration, final agent states (energy/inventory/tools/
+knowledge/beliefs/notes), discoveries, counters, latency percentiles, spend.
+The files tab lists runs/ (summary.json when present, light event scan
+otherwise) with per-run detail + "open in replay".
+
+**Verified:** test_chain/run_m1 pass; 120t mock run via the new API with
+named agents; all 8 tabs exercised headless (Playwright) with zero console
+errors; replay reconstruction cross-checked against summary.json finals.
+
 ## v0.35 — gather target fix, validated (2026-06-11)
 **Fixed:** `_validate_step` stripped x/y from gather steps — every targeted
 gather reached the engine untargeted and died "no wood here", which is why

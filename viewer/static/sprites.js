@@ -346,6 +346,184 @@ const SPRITE_DEFS = {
   },
 };
 
+// ---------------------------------------------------------- item icons
+// (inventory slots, Minecraft-style; transparent background)
+const ITEM_DEFS = {
+  berries: {
+    pal: { r: "#d9534f", R: "#a33232", l: "#3f7a34", h: "#e8807c" },
+    px: [
+      "................",
+      "................",
+      "................",
+      "......l.l.......",
+      ".....ll.ll......",
+      "....rrr.rrr.....",
+      "...rhrrrrhrr....",
+      "...rrrRrrrrR....",
+      "...RrrRRrrRR....",
+      "....RRR.RRR.....",
+      ".....rrr........",
+      "....rhrrR.......",
+      "....rrrRR.......",
+      ".....RRR........",
+      "................",
+      "................",
+    ],
+  },
+  wood: {
+    pal: { k: "#6b4a2b", K: "#46301a", x: "#8a6a42", X: "#a3835a" },
+    px: [
+      "................",
+      "................",
+      "................",
+      "................",
+      "....KKKKKKKKK...",
+      "...KkkkkkkkkkK..",
+      "..XxkkxxxkkkkK..",
+      "..XxXxkkkxkkkK..",
+      "..XxkkkxkkkxkK..",
+      "..XxkxkkkkkkkK..",
+      "...KkkkkkkkkkK..",
+      "....KKKKKKKKK...",
+      "................",
+      "................",
+      "................",
+      "................",
+    ],
+  },
+  stone: {
+    pal: { s: "#6e7068", S: "#565851", x: "#8b8e83", X: "#a4a89a" },
+    px: [
+      "................",
+      "................",
+      "................",
+      "................",
+      "......xxx.......",
+      "....xxXXxxx.....",
+      "...xXXxxxxxx....",
+      "...xXxxxssxs....",
+      "...xxxsssssss...",
+      "...xssssSssss...",
+      "...sssSSSssSs...",
+      "....ssSSSSSs....",
+      ".....sssss......",
+      "................",
+      "................",
+      "................",
+    ],
+  },
+  cooked_food: {
+    pal: { c: "#b5722e", C: "#8a5220", y: "#e0a93e", k: "#46301a" },
+    px: [
+      "................",
+      "................",
+      "................",
+      "................",
+      ".......k........",
+      ".......k........",
+      "......ccc.......",
+      ".....cyccc......",
+      ".....ccCcc......",
+      "....ccccCcc.....",
+      "....cCccccc.....",
+      "....ccCcCcc.....",
+      ".....ccccc......",
+      "......CCC.......",
+      "................",
+      "................",
+    ],
+  },
+  axe: {
+    pal: { k: "#6b4a2b", K: "#46301a", s: "#8b8e83", S: "#a4a89a", d: "#565851" },
+    px: [
+      "................",
+      "....ssS.........",
+      "...sSSSs........",
+      "...sSdSSs.......",
+      "...ssdSSs.......",
+      "....sdkSs.......",
+      ".....kks........",
+      ".....kk.........",
+      "......kk........",
+      "......kk........",
+      ".......kk.......",
+      ".......kk.......",
+      "........kK......",
+      "........kK......",
+      ".........K......",
+      "................",
+    ],
+  },
+  pickaxe: {
+    pal: { k: "#6b4a2b", K: "#46301a", s: "#8b8e83", S: "#a4a89a" },
+    px: [
+      "................",
+      "...sS....Ss.....",
+      "...sSS..SSs.....",
+      "....sSSSSs......",
+      ".....SkkS.......",
+      "......kk........",
+      "......kk........",
+      ".......kk.......",
+      ".......kk.......",
+      "........kk......",
+      "........kk......",
+      ".........kK.....",
+      ".........kK.....",
+      "..........K.....",
+      "................",
+      "................",
+    ],
+  },
+  basket: {
+    pal: { t: "#b08d4a", T: "#8a6c34", d: "#5e4a22" },
+    px: [
+      "................",
+      "................",
+      "................",
+      "....d......d....",
+      "...d.dddddd.d...",
+      "...dtTtTtTtTd...",
+      "...TtTtTtTtTT...",
+      "...dTtTtTtTtd...",
+      "...TtTtTtTtTT...",
+      "...dTtTtTtTtd...",
+      "....dTtTtTtd....",
+      ".....dddddd.....",
+      "................",
+      "................",
+      "................",
+      "................",
+    ],
+  },
+  unknown: {
+    pal: { q: "#7a8568", Q: "#cdd6b8" },
+    px: [
+      "................",
+      "................",
+      "................",
+      "....qqqqqqq.....",
+      "...qq.....qq....",
+      "...qq..QQ.qq....",
+      "........QQ......",
+      ".......QQ.......",
+      "......QQ........",
+      "......QQ........",
+      "................",
+      "......QQ........",
+      "......QQ........",
+      "................",
+      "................",
+      "................",
+    ],
+  },
+};
+
+// per-agent skin tones (cycled by index — portrait + map sprite variety)
+const SKIN_TONES = [
+  ["#e8c090", "#c49468"], ["#caa274", "#a87c50"], ["#9c6b42", "#7a4f2e"],
+];
+
 const AGENT_COLORS = [
   ["#e05a4e", "#9c3328"], ["#4a90d9", "#2c5c96"], ["#58b368", "#357a42"],
   ["#e0a93e", "#9c7020"], ["#b06ad9", "#7a3f9c"], ["#4ecdc4", "#2c8c86"],
@@ -375,7 +553,16 @@ function compileSprite(def, palOverride) {
 function buildSprites() {
   const S = {};
   for (const [name, def] of Object.entries(SPRITE_DEFS)) S[name] = compileSprite(def);
-  S.agents = AGENT_COLORS.map(([b, d]) =>
-    compileSprite(SPRITE_DEFS.agent, { B: b, D: d }));
+  S.agents = AGENT_COLORS.map(([b, d], i) => {
+    const [F, f] = SKIN_TONES[i % SKIN_TONES.length];
+    return compileSprite(SPRITE_DEFS.agent, { B: b, D: d, F, f });
+  });
+  S.items = {};
+  for (const [name, def] of Object.entries(ITEM_DEFS)) S.items[name] = compileSprite(def);
   return S;
+}
+
+/* itemIcon(name) — canvas for an inventory item / tool, '?' when unknown */
+function itemIcon(S, name) {
+  return S.items[name] || S.items.unknown;
 }

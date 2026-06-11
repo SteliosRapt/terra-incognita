@@ -26,9 +26,14 @@ class Simulation:
         self.run_dir = run_dir
         os.makedirs(run_dir, exist_ok=True)
         self.logf = open(os.path.join(run_dir, "events.jsonl"), "w", encoding="utf-8")
-        # spawn agents on grass
+        # spawn agents on grass. Names ARE the ids: they flow into prompts,
+        # speech targets and the event log, so named agents genuinely know
+        # themselves and each other (cfg["agent_names"], optional).
         self.agents: dict[str, AgentState] = {}
-        names = [f"A{i:02d}" for i in range(cfg["n_agents"])]
+        names = list(cfg.get("agent_names") or
+                     (f"A{i:02d}" for i in range(cfg["n_agents"])))
+        if len(names) != cfg["n_agents"] or len(set(names)) != len(names):
+            raise ValueError("agent_names must be unique and match n_agents")
         for name in names:
             while True:
                 x, y = self.rng.randrange(self.world.W), self.rng.randrange(self.world.H)

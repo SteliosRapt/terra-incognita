@@ -15,17 +15,21 @@ import argparse
 import collections
 import json
 import pathlib
+import random
+import re
 import sys
 import threading
 import time
 import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from engine.sim import Simulation                      # noqa: E402
+from engine.world import World                         # noqa: E402
 from brains.llm_planner import LLMPlannerBrain         # noqa: E402
 from brains.providers import make_provider             # noqa: E402
 from run_m3 import BASE, ALL_RECIPES                   # noqa: E402
@@ -40,6 +44,29 @@ WORLD_INT = {"grid_size", "stone_per_tile", "wood_regrow_ticks", "berry_patches"
              "berry_patch_size", "lakes", "forest_regions", "mountain_ranges"}
 WORLD_FLOAT = {"forest_fraction", "mountain_fraction", "berry_regrow_prob",
                "berry_spoil_prob", "water_fraction"}
+
+# default agent names, editable in the Run tab before start (they go into the
+# system prompt and the event log — the agents genuinely know them)
+DEFAULT_NAMES = ["Asha", "Bren", "Cole", "Dara", "Edda", "Finn",
+                 "Goro", "Hild", "Iris", "Joss", "Kael", "Lumi"]
+
+
+def clean_names(raw, n: int) -> list[str] | None:
+    """Validate user-supplied agent names: n unique, 1-14 chars, [A-Za-z0-9_-]
+    (they appear in prompts and as say/give targets, so keep them word-like).
+    Returns None when raw is empty/absent → engine default A00… ids."""
+    if not raw:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError("agent_names must be a list of strings")
+    names = [re.sub(r"[^A-Za-z0-9_\-]", "", str(s))[:14] for s in raw]
+    names = [s for s in names if s]
+    if len(names) != n:
+        raise ValueError(f"need {n} non-empty agent names, got {len(names)}")
+    if len({s.lower() for s in names}) != n:
+        raise ValueError("agent names must be unique")
+    return names
+
 
 # model presets (the configurator's quick options; "custom" uses provider/model)
 PRESETS = {
@@ -75,10 +102,11 @@ class EventTee:
 class InspectableBrain(LLMPlannerBrain):
     """Same planner, but the dashboard keeps each agent's latest exchange."""
 
-    def __init__(self, *args, store=None, store_lock=None, **kwargs):
+    def __init__(self, *args, store=None, store_lock=None, latencies=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._store = store
         self._store_lock = store_lock
+        self._latencies = latencies
 
     def _log(self, obs, attempt, system, user, raw, ms, err):
         super()._log(obs, attempt, system, user, raw, ms, err)
@@ -89,6 +117,8 @@ class InspectableBrain(LLMPlannerBrain):
                "system": system, "prompt": user, "response": raw}
         with self._store_lock:
             self._store[obs.me["id"]] = rec
+            if self._latencies is not None:
+                self._latencies.append(ms)
 
 
 def compute_baseline() -> dict | None:
@@ -165,6 +195,11 @@ class RunManager:
         self.prompt_lock = threading.Lock()
         self.providers: list = []             # shared LLM provider(s) of the live run
         self.baseline = compute_baseline()    # no-LLM reference stats (runs/ scan)
+        # stats-tab accumulators (fed from the worker thread via consume_event)
+        self.latencies: list = []             # planner call ms, whole run
+        self.tick_series: dict = {}           # tick -> {"c": calls, "g": gathers}
+        self.heat: dict = {}                  # "x,y" -> visits (moved events)
+        self.trails: dict = {}                # agent -> deque of recent (x, y)
 
     # ---------- event accounting (called from worker thread via EventTee) ----
     def consume_event(self, ev: dict):
@@ -172,12 +207,31 @@ class RunManager:
         t = ev["type"]
         if t == "planner_called":
             c["planner_calls"] = c.get("planner_calls", 0) + 1
+            self.tick_series.setdefault(ev["tick"], {"c": 0, "g": 0})["c"] += 1
         elif t == "planner_parse_error":
             c["parse_errors"] = c.get("parse_errors", 0) + 1
         elif t == "plan_completed":
             c["plans_completed"] = c.get("plans_completed", 0) + 1
+        elif t == "moved":
+            x, y = ev["position"]
+            key = f"{x},{y}"
+            self.heat[key] = self.heat.get(key, 0) + 1
+            tr = self.trails.setdefault(ev["actor"], collections.deque(maxlen=50))
+            tr.append((x, y))
         elif t == "gathered":
             c["gathered"] = c.get("gathered", 0) + 1
+            res = ev["payload"].get("resource", "?")
+            c.setdefault("gathered_by", {})
+            c["gathered_by"][res] = c["gathered_by"].get(res, 0) + 1
+            self.tick_series.setdefault(ev["tick"], {"c": 0, "g": 0})["g"] += 1
+        elif t == "said":
+            c["said"] = c.get("said", 0) + 1
+        elif t == "gave":
+            c["gave"] = c.get("gave", 0) + 1
+        elif t == "combine_failed":
+            c["combine_failed"] = c.get("combine_failed", 0) + 1
+        elif t == "combine_succeeded":
+            c["combine_succeeded"] = c.get("combine_succeeded", 0) + 1
         elif t == "agent_died":
             c["deaths"] = c.get("deaths", 0) + 1
         elif t == "recipe_learned":
@@ -221,6 +275,10 @@ class RunManager:
             cfg = dict(BASE, seed=seed, n_agents=n_agents,
                        knowledge_condition=condition,
                        replan_interval=int(params.get("replan", 15)))
+            names = clean_names(params.get("agent_names"), n_agents)
+            if names:
+                cfg["agent_names"] = names
+            agent_ids = names or [f"A{i:02d}" for i in range(n_agents)]
             for k, v in (params.get("world") or {}).items():
                 if k in WORLD_INT:
                     cfg[k] = int(v)
@@ -238,11 +296,16 @@ class RunManager:
             self.counters = {}
             self.error = None
             self.providers = []   # shared instances: global cooldowns + spend
+            self.latencies = []
+            self.tick_series = {}
+            self.heat = {}
+            self.trails = {}
 
             def brain(prov):
                 return InspectableBrain(prov, telemetry_path=str(telemetry),
                                         store=self.prompt_store,
-                                        store_lock=self.prompt_lock)
+                                        store_lock=self.prompt_lock,
+                                        latencies=self.latencies)
 
             paid_agents: list[str] = []
             if preset == "openrouter-90-10":
@@ -256,7 +319,7 @@ class RunManager:
                                       "cost_path": cost_path})
                 self.providers = [free, paid]
                 n_paid = n_agents // 10
-                paid_agents = [f"A{i:02d}" for i in range(n_paid)]
+                paid_agents = agent_ids[:n_paid]
                 counter = iter(range(n_agents))   # sim builds brains in name order
 
                 def factory(rng):
@@ -311,8 +374,10 @@ class RunManager:
                     break
                 if self.tick_delay:
                     time.sleep(self.tick_delay)
+            outcome = "stopped" if self._stop.is_set() else "finished"
+            self._write_summary(sim, outcome)
             with self.lock:
-                self.status = "stopped" if self._stop.is_set() else "finished"
+                self.status = outcome
         except Exception:
             with self.lock:
                 self.status = "error"
@@ -322,6 +387,48 @@ class RunManager:
                 sim.logf.close()
             except Exception:
                 pass
+
+    def _write_summary(self, sim: Simulation, outcome: str):
+        """runs/<name>/summary.json — the durable record the Runs tab reads:
+        outcome, final agent states, discoveries, counters, latency, spend."""
+        c = self.counters
+        lat = sorted(self.latencies)
+
+        def pct(p):
+            return lat[min(int(len(lat) * p), len(lat) - 1)] if lat else None
+        spend = None
+        for p in self.providers:
+            t = getattr(p, "totals", None)
+            if t:
+                spend = ({k: spend.get(k, 0) + v for k, v in t.items()}
+                         if spend else dict(t))
+        summary = {
+            "name": self.run_info.get("name"),
+            "outcome": outcome,
+            "provider": self.run_info.get("provider"),
+            "model": self.run_info.get("model"),
+            "condition": self.run_info.get("condition"),
+            "seed": self.run_info.get("seed"),
+            "ticks_planned": self.run_info.get("ticks"),
+            "ticks_done": sim.tick,
+            "started": self.run_info.get("started"),
+            "duration_s": round(time.time() - self.run_info.get("started", time.time()), 1),
+            "agents": [{
+                "id": a.id, "alive": a.alive, "energy": a.energy,
+                "x": a.x, "y": a.y,
+                "inventory": dict(a.inventory), "tools": sorted(a.tools),
+                "knowledge": sorted(a.knowledge), "beliefs": list(a.beliefs),
+                "notes": a.notes,
+            } for _, a in sorted(sim.agents.items())],
+            "discovered": c.get("discovered", {}),
+            "counters": {k: v for k, v in c.items() if k != "discovered"},
+            "latency_ms": ({"n": len(lat), "avg": round(sum(lat) / len(lat)),
+                            "p50": pct(.50), "p95": pct(.95)} if lat else None),
+            "spend": spend,
+        }
+        path = pathlib.Path(sim.run_dir) / "summary.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
 
     def pause(self):
         with self.lock:
@@ -386,6 +493,17 @@ class RunManager:
                 spend = ({k: spend.get(k, 0) + v for k, v in t.items()}
                          if spend else dict(t))
         ticks_done = max(sim.tick, 1)
+        lat = sorted(self.latencies)
+
+        def pct(p):
+            return lat[min(int(len(lat) * p), len(lat) - 1)] if lat else None
+        # per-tick planner-call / gather series, last 240 ticks (sparklines)
+        s0 = max(0, sim.tick - 240)
+        series = {"from": s0,
+                  "calls": [self.tick_series.get(t, {}).get("c", 0)
+                            for t in range(s0, sim.tick)],
+                  "gathers": [self.tick_series.get(t, {}).get("g", 0)
+                              for t in range(s0, sim.tick)]}
         return {
             "tick": sim.tick,
             "grid": rows, "W": w.W, "H": w.H,
@@ -402,6 +520,14 @@ class RunManager:
                 "discovered": c.get("discovered", {}),
                 "recipes": ALL_RECIPES,
                 "spend": spend,
+                "gathered_by": c.get("gathered_by", {}),
+                "said": c.get("said", 0),
+                "gave": c.get("gave", 0),
+                "combine_failed": c.get("combine_failed", 0),
+                "combine_succeeded": c.get("combine_succeeded", 0),
+                "latency_ms": ({"n": len(lat), "avg": round(sum(lat) / len(lat)),
+                                "p50": pct(.50), "p95": pct(.95)} if lat else None),
+                "calls_per_tick": round(calls / ticks_done, 2),
                 "live": {   # normalized like the baseline, for the comparison panel
                     "deaths_per_1k": round(c.get("deaths", 0) / ticks_done * 1000, 2),
                     "completion_pct": round(c.get("plans_completed", 0) / calls * 100, 1) if calls else 0.0,
@@ -409,7 +535,10 @@ class RunManager:
                     "recipes_discovered": len(c.get("discovered", {})),
                 },
             },
-            "events": list(self.events)[-60:],
+            "series": series,
+            "heat": dict(self.heat),
+            "trails": {k: list(v) for k, v in self.trails.items()},
+            "events": list(self.events)[-250:],
         }
 
     # ---------- state for the API -------------------------------------------
@@ -444,6 +573,120 @@ class RunManager:
         except OSError:
             pass
         return sorted(active)
+
+
+# ---------------------------------------------------------------- run files
+_SCAN_CACHE: dict = {}     # (name, mtime) -> light stats for pre-summary runs
+
+
+def _scan_events(path: pathlib.Path) -> dict:
+    ticks = deaths = calls = errs = gathered = 0
+    discovered: dict = {}
+    actors: set = set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                ev = json.loads(line)
+                ticks = max(ticks, ev["tick"] + 1)
+                t = ev["type"]
+                if ev.get("actor"):
+                    actors.add(ev["actor"])
+                if t == "agent_died":
+                    deaths += 1
+                elif t == "planner_called":
+                    calls += 1
+                elif t == "planner_parse_error":
+                    errs += 1
+                elif t == "gathered":
+                    gathered += 1
+                elif t == "recipe_learned":
+                    discovered.setdefault(ev["payload"]["recipe"], ev["tick"])
+    except (json.JSONDecodeError, OSError, KeyError):
+        pass    # half-written live file — report what was readable
+    return {"ticks_done": ticks, "deaths": deaths, "planner_calls": calls,
+            "parse_errors": errs, "gathered": gathered,
+            "agents_seen": len(actors), "discovered": discovered}
+
+
+def run_listing() -> list:
+    out = []
+    if not RUNS.exists():
+        return out
+    for d in sorted(RUNS.iterdir()):
+        ev = d / "events.jsonl"
+        if not d.is_dir() or not ev.exists():
+            continue
+        info = {"name": d.name, "mtime": ev.stat().st_mtime}
+        sp = d / "summary.json"
+        if sp.exists():
+            with open(sp, encoding="utf-8") as f:
+                info["summary"] = json.load(f)
+        else:
+            key = (d.name, ev.stat().st_mtime)
+            if key not in _SCAN_CACHE:
+                _SCAN_CACHE[key] = _scan_events(ev)
+            info["scan"] = _SCAN_CACHE[key]
+        cp = d / "config.json"
+        if cp.exists():
+            with open(cp, encoding="utf-8") as f:
+                cfg = json.load(f)
+            info["config"] = {k: cfg.get(k) for k in
+                              ("seed", "n_agents", "knowledge_condition",
+                               "grid_size", "agent_names")}
+        out.append(info)
+    out.sort(key=lambda r: -r["mtime"])
+    return out
+
+
+def replay_payload(name: str) -> dict:
+    """Everything the Replay tab needs: the initial world (regenerated
+    deterministically from the run's config + seed — same rng sequence as
+    Simulation.__init__) and the full event list."""
+    d = (RUNS / name).resolve()
+    if RUNS.resolve() not in d.parents or not d.is_dir():
+        raise ValueError(f"unknown run {name!r}")
+    with open(d / "config.json", encoding="utf-8") as f:
+        cfg = json.load(f)
+    rng = random.Random(cfg["seed"])
+    w = World(cfg, rng)
+    rows = []
+    for y in range(w.H):
+        row = []
+        for x in range(w.W):
+            t = w.grid[y][x]
+            ch = TERRAIN_CHAR.get(t.type, "g")
+            if t.type == "grass" and t.berries > 0:
+                ch = "b"
+            row.append(ch)
+        rows.append("".join(row))
+    # spawn positions: identical loop to Simulation.__init__ on the same rng
+    names = list(cfg.get("agent_names") or
+                 (f"A{i:02d}" for i in range(cfg["n_agents"])))
+    agents0 = []
+    for nm in names:
+        while True:
+            x, y = rng.randrange(w.W), rng.randrange(w.H)
+            if w.tile(x, y).type == "grass":
+                break
+        agents0.append({"id": nm, "x": x, "y": y})
+    events = []
+    with open(d / "events.jsonl", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                break    # truncated tail of a live file
+            ev.pop("visibility", None)
+            events.append(ev)
+    return {"name": name, "W": w.W, "H": w.H, "grid": rows,
+            "agents0": agents0,
+            "ticks": (events[-1]["tick"] + 1) if events else 0,
+            "events": events,
+            "config": {k: cfg.get(k) for k in
+                       ("seed", "n_agents", "knowledge_condition")}}
 
 
 MANAGER = RunManager()
@@ -485,7 +728,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"world": {k: BASE[k] for k in
                                   sorted(WORLD_INT | WORLD_FLOAT)},
                         "replan_interval": BASE["replan_interval"],
-                        "presets": PRESETS})
+                        "presets": PRESETS,
+                        "default_names": DEFAULT_NAMES,
+                        "recipes": ALL_RECIPES})
+        elif path == "/api/runs":
+            self._json(run_listing())
+        elif path == "/api/replay":
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                self._json(replay_payload((q.get("run") or [""])[0]))
+            except (ValueError, OSError, KeyError, json.JSONDecodeError) as e:
+                self._json({"error": str(e)}, 404)
         elif path == "/":
             self._file(STATIC / "index.html")
         else:

@@ -34,16 +34,111 @@
 <div id="errorBanner" class="banner err hidden"></div>
 
 <main>
-  <!-- ------------------------------------------------ left: control deck -->
-  <aside id="deck">
-    <section class="panel">
-      <h2>▸ Run Control</h2>
-      <div class="presets">
-        <button id="btnMock" class="big mock">MOCK PREVIEW<small>10 agents · 300 ticks · fast</small></button>
-        <button id="btnAcceptance" class="big accept">ACCEPTANCE RUN<small>gemma4:e2b · blind · 10 × 1000</small></button>
+  <!-- ------------------------------------------------ center: the world -->
+  <section id="worldwrap">
+    <div id="mapframe">
+      <canvas id="map" width="512" height="512"></canvas>
+      <div id="replayBadge" class="hidden">⏪ REPLAY</div>
+      <div id="tooltip" class="hidden"></div>
+    </div>
+    <div id="maptools">
+      <div id="legend"></div>
+      <div class="overlays">
+        <button id="tgTrails" class="toggle">trails</button>
+        <button id="tgHeat" class="toggle">heat</button>
       </div>
-      <details id="customRun">
-        <summary>configure run (defaults = quick start)</summary>
+    </div>
+  </section>
+
+  <div id="splitter" title="drag to resize"></div>
+
+  <!-- ------------------------------------------------ right: the console -->
+  <aside id="side">
+    <nav id="tabs">
+      <button data-tab="overview" title="Overview"><i>⌂</i><span>base</span></button>
+      <button data-tab="agents"   title="Agents"><i>☺</i><span>agents</span></button>
+      <button data-tab="events"   title="Event log"><i>≡</i><span>events</span></button>
+      <button data-tab="stats"    title="Statistics"><i>▤</i><span>stats</span></button>
+      <button data-tab="replay"   title="Replay"><i>⏪</i><span>replay</span></button>
+      <button data-tab="run"      title="Run setup"><i>▶</i><span>run</span></button>
+      <button data-tab="files"    title="Saved runs"><i>🗁</i><span>files</span></button>
+      <button data-tab="about"    title="What is this?"><i>?</i><span>about</span></button>
+    </nav>
+
+    <div id="panes">
+      <!-- ============================================= overview -->
+      <section id="tab-overview" class="pane">
+        <h2>▸ Expedition</h2>
+        <div id="ovAgents" class="minicards"></div>
+        <h2>▸ Discoveries</h2>
+        <div id="ovDiscoveries" class="chips"></div>
+        <h2>▸ Key numbers</h2>
+        <div id="ovStats" class="statgrid"></div>
+        <h2>▸ Highlights</h2>
+        <div id="ovEvents" class="evlist"></div>
+      </section>
+
+      <!-- ============================================= agents -->
+      <section id="tab-agents" class="pane">
+        <div id="agentList"></div>
+      </section>
+
+      <!-- ============================================= events -->
+      <section id="tab-events" class="pane">
+        <div id="evFilterAgents" class="chips"></div>
+        <div class="evcats" id="evCats">
+          <button data-cat="all" class="on">all</button>
+          <button data-cat="social">social</button>
+          <button data-cat="gather">gather</button>
+          <button data-cat="craft">craft</button>
+          <button data-cat="trouble">trouble</button>
+          <button data-cat="planner">planner</button>
+        </div>
+        <div id="evList" class="evlist grow"></div>
+      </section>
+
+      <!-- ============================================= stats -->
+      <section id="tab-stats" class="pane">
+        <div id="statsBody"></div>
+        <h2>▸ Planner calls / tick</h2>
+        <canvas id="sparkCalls" class="spark" width="560" height="72"></canvas>
+        <h2>▸ Gathers / tick</h2>
+        <canvas id="sparkGathers" class="spark" width="560" height="72"></canvas>
+        <h2>▸ Where they walk (heatmap)</h2>
+        <canvas id="heatmap" width="256" height="256"></canvas>
+      </section>
+
+      <!-- ============================================= replay -->
+      <section id="tab-replay" class="pane">
+        <h2>▸ Replay — does not touch the live run</h2>
+        <div class="rprow">
+          <select id="rpRun"></select>
+          <button id="rpLoad">LOAD</button>
+        </div>
+        <div class="rprow">
+          <button id="rpPlay" disabled>▶</button>
+          <input id="rpScrub" type="range" min="0" max="0" value="0" disabled>
+          <span id="rpTick" class="rptick">—</span>
+          <select id="rpSpeed">
+            <option value="2">2 t/s</option>
+            <option value="8" selected>8 t/s</option>
+            <option value="25">25 t/s</option>
+            <option value="100">100 t/s</option>
+          </select>
+        </div>
+        <div id="rpInfo" class="dim"></div>
+        <h2>▸ Events at this tick</h2>
+        <div id="rpEvents" class="evlist grow"></div>
+      </section>
+
+      <!-- ============================================= run setup -->
+      <section id="tab-run" class="pane">
+        <h2>▸ Quick start</h2>
+        <div class="presets">
+          <button id="btnMock" class="big mock">MOCK PREVIEW<small>10 agents · 300 ticks · fast · no LLM</small></button>
+          <button id="btnAcceptance" class="big accept">ACCEPTANCE RUN<small>gemma4:e2b · blind · 10 × 1000</small></button>
+        </div>
+        <h2>▸ Configure</h2>
         <div class="form">
           <label>models
             <select id="fPreset">
@@ -70,53 +165,32 @@
           <label class="half">ticks <input id="fTicks" type="number" value="500" min="1"></label>
           <label class="half">seed <input id="fSeed" type="number" value="42"></label>
           <label class="half">name <input id="fName" placeholder="(auto)"></label>
-          <details id="mapParams">
-            <summary>map parameters (defaults from engine)</summary>
-            <div class="form" id="worldForm"></div>
-          </details>
-          <button id="btnCustom" class="big custom">START RUN</button>
         </div>
-      </details>
-      <label class="speed">tick delay <span id="speedVal">0 ms</span>
-        <input id="speed" type="range" min="0" max="1000" step="20" value="0">
-      </label>
-    </section>
+        <h2>▸ Agent names <button id="btnShuffleNames" class="mini">⟳ shuffle</button></h2>
+        <p class="dim small">editable before start — names go into the agents' prompts, so they know who they are</p>
+        <div id="namesGrid" class="form"></div>
+        <details id="mapParams">
+          <summary>map parameters (defaults from engine)</summary>
+          <div class="form" id="worldForm"></div>
+        </details>
+        <button id="btnCustom" class="big custom">START RUN</button>
+        <label class="speed">tick delay <span id="speedVal">0 ms</span>
+          <input id="speed" type="range" min="0" max="1000" step="20" value="0">
+        </label>
+      </section>
 
-    <section class="panel">
-      <h2>▸ Discoveries</h2>
-      <div id="discoveries" class="chips"></div>
-    </section>
+      <!-- ============================================= files -->
+      <section id="tab-files" class="pane">
+        <h2>▸ Saved runs <button id="filesRefresh" class="mini">⟳ refresh</button></h2>
+        <p class="dim small">everything in runs/ — events, prompts and a summary are written automatically</p>
+        <div id="runsList" class="grow"></div>
+      </section>
 
-    <section class="panel">
-      <h2>▸ vs no-LLM runs</h2>
-      <div id="baseline"></div>
-    </section>
-
-    <section class="panel grow">
-      <h2>▸ Event Feed</h2>
-      <div id="feed"></div>
-    </section>
-  </aside>
-
-  <!-- ------------------------------------------------ center: the world -->
-  <section id="worldwrap">
-    <div id="mapframe">
-      <canvas id="map" width="512" height="512"></canvas>
-      <div id="tooltip" class="hidden"></div>
+      <!-- ============================================= about -->
+      <section id="tab-about" class="pane">
+        <div id="aboutBody"></div>
+      </section>
     </div>
-    <div id="legend"></div>
-  </section>
-
-  <!-- ------------------------------------------------ right: minds -->
-  <aside id="minds">
-    <section class="panel">
-      <h2>▸ Agents</h2>
-      <div id="agentCards"></div>
-    </section>
-    <section class="panel grow" id="inspectorPanel">
-      <h2>▸ Inspector <span id="inspId" class="insp-id"></span></h2>
-      <div id="inspector"><p class="dim">select an agent on the map or in the list</p></div>
-    </section>
   </aside>
 </main>
 
