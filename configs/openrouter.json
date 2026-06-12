@@ -1,11 +1,32 @@
 {
+  "comment": "models = the default chain (gemma-4-31b free: best tps of the smart free models). paid_models = tier:paid (gpt-5-nano: budget paid, $0.05/M in $0.40/M out). judge_models = the survey judge chain (owl-alpha first so judging never eats the planners' gemma quota). presets = named chains for ti.py run --preset; edit freely.",
   "models": [
     "google/gemma-4-31b-it:free",
     "google/gemma-4-26b-a4b-it:free"
   ],
   "paid_models": [
-    "qwen/qwen3.6-35b-a3b"
+    "openai/gpt-5-nano"
   ],
+  "judge_models": [
+    "openrouter/owl-alpha",
+    "google/gemma-4-26b-a4b-it:free",
+    "google/gemma-4-31b-it:free"
+  ],
+  "presets": {
+    "gemma": ["google/gemma-4-31b-it:free", "google/gemma-4-26b-a4b-it:free"],
+    "owl": ["openrouter/owl-alpha", "google/gemma-4-31b-it:free"],
+    "nemotron-ultra": ["nvidia/nemotron-3-ultra-550b-a55b:free"],
+    "llama70-free": ["meta-llama/llama-3.3-70b-instruct:free", "openai/gpt-oss-120b:free"],
+    "oss120-free": ["openai/gpt-oss-120b:free", "openai/gpt-oss-20b:free"],
+    "nano": ["openai/gpt-5-nano"],
+    "qwen36-paid": ["qwen/qwen3.6-35b-a3b"]
+  },
+  "preset_notes": {
+    "gemma": "default: smart free model with the best tps",
+    "owl": "owl-alpha: smart free (stealth) model, 1M ctx",
+    "nemotron-ultra": "very smart free model but ~7 tps - SLOW, overnight only",
+    "nano": "budget paid default"
+  },
   "temperature": 0.7,
   "max_tokens": 2048,
   "timeout": 180.0,

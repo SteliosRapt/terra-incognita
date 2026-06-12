@@ -301,6 +301,27 @@ const SPRITE_DEFS = {
       "................",
     ],
   },
+  book: {
+    pal: { p: "#caa86a", P: "#9c7c42", w: "#f4ead2", W: "#d8cba6", l: "#6a4a22", r: "#8a2f2a" },
+    px: [
+      "................",
+      "................",
+      "....llllllll....",
+      "...lwwwwwwwwl...",
+      "...lwWwwwwWwl...",
+      "..lwwwwrwwwwwl..",
+      "..lwWwwrwwWwwl..",
+      "..lwwwwrwwwwwl..",
+      ".lwwWwwrwwwWwwl.",
+      ".lwwwwwrwwwwwwl.",
+      ".lWwwwwrwwwWwwl.",
+      ".lppppppppppppl.",
+      ".lPPPPPPPPPPPPl.",
+      "..llllllllllll..",
+      "................",
+      "................",
+    ],
+  },
   skull: {
     pal: { b: "#ddd6c4", B: "#a39d8c", d: "#3a352a" },
     px: [

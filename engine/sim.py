@@ -1,8 +1,9 @@
 """sim.py — tick loop per spec §3c: WORLD PHASE → AGENT PHASE → COMMIT."""
 from __future__ import annotations
 import json, os, random, re
-from .world import World, FOREST, MOUNTAIN
+from .world import World, Structure, Book, FOREST, MOUNTAIN
 from .techtree import TechTree
+from .questions import load_questions
 from .agent import AgentState
 from .events import Event, render_for_journal
 from . import actions
@@ -41,8 +42,39 @@ class Simulation:
                     break
             self.agents[name] = AgentState(id=name, x=x, y=y)
         self._inject_knowledge(cfg.get("knowledge_condition", "blind"), names)
+        self._init_book(names)
         self.brains = {name: brain_factory(self.rng) for name in names}
         self._was_critical: set[str] = set()
+
+    def _init_book(self, names: list[str]):
+        """Book conditions (notes page 1). Uses no rng: condition=none runs
+        stay byte-identical to pre-book builds (M1/M3 determinism)."""
+        cond = self.cfg.get("book_condition", "none")
+        if cond == "none":
+            return
+        if cond not in ("central", "librarian", "personal", "cloud"):
+            raise ValueError(f"unknown book_condition: {cond}")
+        qs = load_questions(self.cfg.get("questions_path"), self.world.techtree)
+        if cond == "personal":
+            for name in names:
+                self.world.books[name] = Book(qs)
+        else:
+            self.world.books["shared"] = Book(qs)
+        if cond in ("central", "librarian"):
+            # nearest grass tile to the map centre, deterministic
+            c = (self.world.W // 2, self.world.H // 2)
+            pos = self.world.find_tiles(lambda t: t.type == "grass", c,
+                                        self.world.W // 2)[0]
+            self.world.book_pos = pos
+            self.world.structures[pos] = Structure("book", "world", 0)
+            # replay/screenshot reconstruction learns of the book from the log
+            self.logf.write(Event(0, "structure_built", position=pos,
+                                  payload={"structure": "book"}).to_json() + "\n")
+        if cond == "librarian":
+            self.cfg.setdefault("book_manager", names[0])
+            if self.cfg["book_manager"] not in names:
+                raise ValueError(f"book_manager {self.cfg['book_manager']!r} "
+                                 "is not an agent")
 
     def _inject_knowledge(self, condition: str, names: list[str]):
         """Knowledge conditions (spec §4): seed agent.knowledge at init. Oracle
@@ -93,6 +125,20 @@ class Simulation:
                 structs.append({"type": st.type, "pos": pos, "owner": st.owner})
         knowledge = ([w.techtree.describe(rid) for rid in sorted(ag.knowledge)]
                      if w.techtree else [])
+        book_view = None
+        cond = self.cfg.get("book_condition", "none")
+        if cond != "none":
+            book, writable, reason = w.book_access(ag.id, ag.pos)
+            book_view = {"condition": cond, "where": w.book_pos,
+                         "manager": self.cfg.get("book_manager"),
+                         "readable": book is not None, "writable": writable,
+                         "reason": reason}
+            if book is not None:
+                book_view["questions"] = [
+                    dict(q, answer=book.answers.get(q["id"]))
+                    for q in book.questions]
+                book_view["entries"] = list(book.entries[-8:])
+                book_view["n_entries"] = len(book.entries)
         return Observation(
             tick=self.tick,
             me={"id": ag.id, "pos": ag.pos, "energy": ag.energy,
@@ -103,7 +149,8 @@ class Simulation:
             nearby_structures=structs,
             journal_tail=ag.journal[-12:],
             knowledge=knowledge,
-            beliefs=list(ag.beliefs), notes=ag.notes)
+            beliefs=list(ag.beliefs), notes=ag.notes,
+            book=book_view)
 
     # ---------- one tick ----------
     def step(self):
@@ -269,7 +316,7 @@ class Simulation:
                  ("mountain", 1): "^", ("mountain", 0): "_"}
         rows = []
         agent_at = {a.pos: a.id[-1] for a in self.agents.values() if a.alive}
-        struct_char = {"fire": "F", "farm": "f", "storehouse": "#"}
+        struct_char = {"fire": "F", "farm": "f", "storehouse": "#", "book": "B"}
         for y in range(w.H):
             row = []
             for x in range(w.W):

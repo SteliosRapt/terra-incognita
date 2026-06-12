@@ -342,7 +342,8 @@ function drawGrid(rows, W, H, tileOverride) {
 }
 function structSprite(type) {
   return type === "fire" ? (fireFrame ? SPR.fire1 : SPR.fire0)
-       : type === "farm" ? SPR.farm : SPR.storehouse;
+       : type === "farm" ? SPR.farm
+       : type === "book" ? SPR.book : SPR.storehouse;
 }
 function drawHeat(heat, getCount) {
   let max = 1;
@@ -1093,7 +1094,7 @@ not just one story</li>
 (function legend() {
   const items = [["grass", SPR.grass], ["berries", SPR.bush], ["forest", SPR.tree],
     ["stone", SPR.rock], ["water", SPR.water0], ["fire", SPR.fire0],
-    ["farm", SPR.farm], ["storehouse", SPR.storehouse],
+    ["farm", SPR.farm], ["storehouse", SPR.storehouse], ["book", SPR.book],
     ["agent", SPR.agents[0]], ["died here", SPR.skull]];
   $("legend").innerHTML = items.map(([n]) => `<span><canvas data-n="${n}" width="16" height="16"></canvas>${n}</span>`).join("");
   const by = Object.fromEntries(items);

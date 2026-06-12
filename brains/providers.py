@@ -284,7 +284,8 @@ def make_provider(spec: dict, rng: random.Random | None = None) -> Provider:
     openrouter: kwargs missing from the spec are filled from
     configs/openrouter.json (the model configurator) — so the chain,
     temperature etc. live in one editable file and the CLI/UI only
-    overrides what the user typed.
+    overrides what the user typed. Chain selection precedence:
+    --model (explicit) > preset=<name> > tier=paid > config "models".
     """
     spec = dict(spec)
     backend = spec.pop("backend", "ollama")
@@ -297,12 +298,21 @@ def make_provider(spec: dict, rng: random.Random | None = None) -> Provider:
             with open(OPENROUTER_CONFIG, encoding="utf-8") as f:
                 defaults = json.load(f)
             spec = {**defaults, **spec}
+        for meta in ("comment", "preset_notes", "judge_models"):
+            spec.pop(meta, None)      # config metadata, not provider kwargs
+        presets = spec.pop("presets", {})
         paid = spec.pop("paid_models", None)
         if spec.pop("tier", "free") == "paid":
             if not paid:
                 raise ValueError("openrouter: tier=paid but no paid_models in "
                                  f"{OPENROUTER_CONFIG}")
             spec["models"] = paid
+        preset = spec.pop("preset", None)
+        if preset is not None:
+            if preset not in presets:
+                raise ValueError(f"openrouter: unknown preset {preset!r} "
+                                 f"(have: {', '.join(sorted(presets))})")
+            spec["models"] = presets[preset]
         if "model" in spec:           # CLI/UI single --model overrides the chain
             spec["models"] = spec.pop("model")
         return OpenRouterProvider(**spec)

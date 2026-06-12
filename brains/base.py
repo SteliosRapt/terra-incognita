@@ -16,6 +16,7 @@ class Observation:
     knowledge: list = field(default_factory=list)   # confirmed recipes, rendered to text
     beliefs: list = field(default_factory=list)     # mind-owned hypotheses
     notes: str = ""                                  # mind-owned scratchpad
+    book: dict | None = None                         # book view (None = no book condition)
 
 
 @dataclass

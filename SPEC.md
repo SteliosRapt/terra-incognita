@@ -245,19 +245,24 @@ Visualizer: simple top-down web view (HTML canvas or pygame), tiles + agent spri
 
 ```
 terra-incognita/
+├── ti.py               # experiment CLI: run/list/status/summary/survey/screenshot
 ├── engine/
-│   ├── world.py        # grid, tiles, resources, entities (Fire, Farm, Storehouse)
+│   ├── world.py        # grid, tiles, resources, entities (Fire, Farm, Storehouse, Book)
 │   ├── agent.py        # state, journal, executor (Tier B)
 │   ├── techtree.py     # loads techtree.json, resolves combine() attempts
 │   ├── actions.py      # primitive action implementations + validation
 │   ├── sim.py          # tick loop, event log writer (JSONL)
+│   ├── questions.py    # epistemics questionnaire + ground-truth derivation
 │   └── defaults.py     # canonical run config (world params, recipe list)
 ├── brains/
 │   ├── llm_planner.py  # prompt builder, JSON parsing, retry logic
 │   ├── providers.py    # mock / ollama / anthropic / openrouter backends
+│   ├── survey.py       # free-LLM judge: binary world-knowledge verdicts
 │   └── scripted.py     # rule-based baseline agent (important control!)
 ├── configs/
 │   ├── techtree_v0.json
+│   ├── questions_v0.json  # the world-questions the societies try to answer
+│   ├── openrouter.json    # model chains + presets (judge chain included)
 │   └── experiments/    # (planned, M5) one config per condition cell
 ├── analysis/           # (planned, M4) discovery curves, diffusion graphs, stats
 ├── viewer/             # live dashboard + replay of past runs

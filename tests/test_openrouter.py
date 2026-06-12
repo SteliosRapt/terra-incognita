@@ -139,11 +139,24 @@ def test_make_provider_reads_config_and_model_overrides_chain(monkeypatch):
     assert p2.models == ["x/y:free", "z/w"]
 
 
-def test_make_provider_paid_tier_uses_qwen(monkeypatch):
+def test_make_provider_paid_tier_uses_config_paid_models(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     cfg = json.loads((ROOT / "configs" / "openrouter.json").read_text(encoding="utf-8"))
     p = make_provider({"backend": "openrouter", "tier": "paid"})
-    assert p.models == cfg["paid_models"] == ["qwen/qwen3.6-35b-a3b"]
+    assert p.models == cfg["paid_models"] == ["openai/gpt-5-nano"]
+
+
+def test_make_provider_preset_selects_chain(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    cfg = json.loads((ROOT / "configs" / "openrouter.json").read_text(encoding="utf-8"))
+    p = make_provider({"backend": "openrouter", "preset": "owl"})
+    assert p.models == cfg["presets"]["owl"]
+    assert p.models[0] == "openrouter/owl-alpha"
+    with pytest.raises(ValueError, match="unknown preset"):
+        make_provider({"backend": "openrouter", "preset": "nope"})
+    # explicit --model still beats a preset
+    p2 = make_provider({"backend": "openrouter", "preset": "owl", "model": "x/y"})
+    assert p2.models == ["x/y"]
 
 
 def _write_run(d, events, with_prompts=None):
