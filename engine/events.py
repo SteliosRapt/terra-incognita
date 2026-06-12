@@ -70,6 +70,14 @@ def render_for_journal(ev: Event, viewer_id: str) -> str:
         return f"{who} stored {p['qty']} {p['item']} in the storehouse."
     if t == "storehouse_withdraw":
         return f"{who} took {p['qty']} {p['item']} from the storehouse."
+    if t == "book_note_written":
+        if you:
+            return f'You wrote in the book: "{p["text"]}"'
+        return f"{who} wrote a note in the book."
+    if t == "book_answer_written":
+        if you:
+            return f"You recorded the book's answer to '{p['question']}'."
+        return f"{who} updated the book's answer to '{p['question']}'."
     if t == "spoiled":
         return f"{p['qty']} of your berries rotted away."
     if t == "plan_interrupted":

@@ -35,7 +35,19 @@ MAX_PLAN_STEPS = 20
 MAX_BELIEFS = 12
 BELIEF_CAP = 250
 MESSAGE_CAP = 300
+BOOK_NOTE_CAP = 400       # mirror engine/actions.py caps
+BOOK_ANSWER_CAP = 300
 RESOURCES = ("berries", "wood", "stone")
+
+# book conditions: one goal sentence appended to the system prompt
+BOOK_SYSTEM = {
+    "shared": ("This world contains a single Book listing open questions "
+               "about how the world works. Filling it with correct answers "
+               "is a shared goal of your society."),
+    "personal": ("You carry a private Book listing open questions about how "
+                 "this world works. Recording correct answers in it is one "
+                 "of your goals."),
+}
 
 ACTIONS_DOC = (
     "move_to(x, y) | gather(resource: berries/wood/stone, x, y — walks to "
@@ -44,12 +56,13 @@ ACTIONS_DOC = (
     "give(target, item, qty) | drop(item, qty) | wait"
 )
 
-FORMAT_DOC = (
+_PLAN_DOC = (
     "Plan several steps ahead (up to 20): you will not be consulted again "
     "until the plan finishes, a step fails, or many ticks pass, and each "
     "consultation costs you time. One gather collects from one tile; to "
     "collect several, gather at several positions.\n"
-    "Respond ONLY with a JSON object, no other text:\n"
+)
+_SCHEMA_DOC = (
     '{"reasoning": "<one short sentence: what you are doing and why>",\n'
     ' "updated_beliefs": ["<your current hypotheses about how this world works>", ...],\n'
     ' "updated_notes": "<your private scratchpad, rewritten in full, max 1500 chars>",\n'
@@ -58,12 +71,63 @@ FORMAT_DOC = (
     '          {"action": "move_to", "x": 6, "y": 5},\n'
     '          {"action": "combine", "items": {"wood": 2, "stone": 1}}]}'
 )
+FORMAT_DOC = (_PLAN_DOC
+              + "Respond ONLY with a JSON object, no other text:\n" + _SCHEMA_DOC)
+# the freeform_thoughts knob (notes page 2: "is this helpful?"): same schema,
+# but the model may reason in prose around it
+FORMAT_DOC_FREEFORM = (
+    _PLAN_DOC
+    + "You may think out loud in plain text first if that helps you. Your "
+    "reply MUST END with one JSON object in exactly this format (use curly "
+    "braces nowhere else):\n" + _SCHEMA_DOC)
 
 
 # ---------------------------------------------------------------- prompt
-def build_prompt(obs: Observation, persona: str | None = None) -> tuple[str, str]:
+def _render_book(book: dict) -> str:
+    """The == BOOK == section. Far from a central book: just where it is.
+    Readable: every question with its current answer (author + tick — answers
+    are editable) and the latest immutable note entries."""
+    if not book["readable"]:
+        bx, by = book["where"]
+        return (f"The Book stands at ({bx}, {by}). Stand on or next to it "
+                "to read it and write in it.")
+    lines = []
+    for q in book["questions"]:
+        a = q.get("answer")
+        ans = (f'answered by {a["author"]} at t{a["tick"]}: "{a["text"]}"'
+               if a else "(unanswered)")
+        lines.append(f"- [{q['id']}] {q['text']}\n    {ans}")
+    n = book.get("n_entries", 0)
+    shown = book.get("entries", [])
+    if n > len(shown):
+        lines.append(f"Notes (latest {len(shown)} of {n}; entries are "
+                     "permanent and cannot be edited):")
+    elif shown:
+        lines.append("Notes (permanent, cannot be edited):")
+    for e in shown:
+        lines.append(f'  [t{e["tick"]}] {e["author"]}: "{e["text"]}"')
+    if book["writable"]:
+        lines.append("You may write: book_answer overwrites a question's "
+                     "answer, book_note adds a permanent note.")
+    elif book.get("reason"):
+        lines.append(book["reason"].capitalize() + ".")
+    return "\n".join(lines)
+
+
+def build_prompt(obs: Observation, persona: str | None = None,
+                 freeform: bool = False) -> tuple[str, str]:
     me = obs.me
     system = SYSTEM_TEMPLATE.format(name=me["id"])
+    if obs.book:
+        cond = obs.book["condition"]
+        system += " " + BOOK_SYSTEM["personal" if cond == "personal" else "shared"]
+        if cond == "librarian":
+            mgr = obs.book["manager"]
+            system += (" You are the keeper of the Book: only you can write "
+                       "in it, so gather what others learn."
+                       if mgr == me["id"] else
+                       f" Only {mgr} can write in the Book; share what you "
+                       "learn so it gets recorded.")
     if persona:
         system += " " + persona
 
@@ -86,15 +150,25 @@ def build_prompt(obs: Observation, persona: str | None = None) -> tuple[str, str
         ax, ay = a["pos"]
         near.append(f"{a['id']} at ({ax}, {ay})")
 
+    actions_doc = ACTIONS_DOC
+    if obs.book and obs.book["writable"]:
+        actions_doc += (" | book_answer(question, answer — overwrite the "
+                        "Book's answer to one [question id]) | "
+                        "book_note(text — permanent timestamped Book entry)")
+
     lines = [
         f"== STATUS == {status}",
         "== YOU KNOW == " + ("; ".join(obs.knowledge) or "no confirmed recipes yet"),
         "== YOU BELIEVE == " + ("; ".join(obs.beliefs) or "(nothing yet)"),
         "== NOTES == " + (obs.notes or "(empty)"),
         "== NEARBY == " + ("; ".join(near) or "nothing of interest in sight"),
+    ]
+    if obs.book:
+        lines.append("== BOOK ==\n" + _render_book(obs.book))
+    lines += [
         "== RECENT EVENTS ==\n" + ("\n".join(obs.journal_tail) or "(nothing yet)"),
-        "== ACTIONS == " + ACTIONS_DOC,
-        FORMAT_DOC,
+        "== ACTIONS == " + actions_doc,
+        FORMAT_DOC_FREEFORM if freeform else FORMAT_DOC,
     ]
     return system, "\n".join(lines)
 
@@ -152,6 +226,17 @@ def _validate_step(step) -> dict:
     if kind in ("drop", "deposit", "withdraw"):
         return {"action": kind, "item": str(step["item"]),
                 "qty": _int(step.get("qty", 1))}
+    if kind == "book_answer":
+        qid = str(step.get("question", "")).strip()
+        ans = str(step.get("answer", "")).strip()[:BOOK_ANSWER_CAP]
+        if not qid or not ans:
+            raise ValueError("book_answer: question and answer required")
+        return {"action": "book_answer", "question": qid, "answer": ans}
+    if kind == "book_note":
+        text = str(step.get("text", "")).strip()[:BOOK_NOTE_CAP]
+        if not text:
+            raise ValueError("book_note: empty text")
+        return {"action": "book_note", "text": text}
     if kind == "wait":
         return {"action": "wait"}
     raise ValueError(f"unknown action {kind!r}")
@@ -188,15 +273,16 @@ class LLMPlannerBrain:
     engine; this class only turns an Observation into a PlanResult."""
 
     def __init__(self, provider: Provider, telemetry_path: str | None = None,
-                 persona: str | None = None):
+                 persona: str | None = None, freeform: bool = False):
         self.provider = provider
         self.telemetry_path = telemetry_path
         self.persona = persona
+        self.freeform = freeform   # allow prose around the JSON (ablation knob)
         # sim.py fans planning out to threads only when every brain opts in
         self.parallel_safe = getattr(provider, "parallel_safe", False)
 
     def plan(self, obs: Observation) -> PlanResult:
-        system, user = build_prompt(obs, self.persona)
+        system, user = build_prompt(obs, self.persona, self.freeform)
         last_err = None
         for attempt in (1, 2):
             prompt = user if attempt == 1 else (

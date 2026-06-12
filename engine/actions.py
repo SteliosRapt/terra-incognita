@@ -248,6 +248,49 @@ def _give(a, ag, world, tick, agents):
                         position=ag.pos, payload={"item": item, "qty": given})]
 
 
+BOOK_NOTE_CAP = 400
+BOOK_ANSWER_CAP = 300
+
+
+def _book_note(a, ag, world, tick):
+    """Append a permanent, timestamped entry to the book (never editable)."""
+    book, writable, reason = world.book_access(ag.id, ag.pos)
+    if book is None or not writable:
+        return True, [Event(tick, "plan_interrupted", actor=ag.id,
+                            payload={"reason": reason or "you may not write in the book"})]
+    text = str(a.get("text", "")).strip()[:BOOK_NOTE_CAP]
+    if not text:
+        return True, [Event(tick, "plan_interrupted", actor=ag.id,
+                            payload={"reason": "book_note: nothing to write"})]
+    book.entries.append({"tick": tick, "author": ag.id, "text": text})
+    return True, [Event(tick, "book_note_written", actor=ag.id, position=ag.pos,
+                        payload={"text": text})]
+
+
+def _book_answer(a, ag, world, tick):
+    """Set/overwrite the book's answer to one question (editable, last write
+    wins; author and tick recorded)."""
+    book, writable, reason = world.book_access(ag.id, ag.pos)
+    if book is None or not writable:
+        return True, [Event(tick, "plan_interrupted", actor=ag.id,
+                            payload={"reason": reason or "you may not write in the book"})]
+    qid = str(a.get("question", "")).strip()
+    if not any(q["id"] == qid for q in book.questions):
+        ids = ", ".join(q["id"] for q in book.questions)
+        return True, [Event(tick, "plan_interrupted", actor=ag.id,
+                            payload={"reason": f"book_answer: no question '{qid}' "
+                                               f"(questions: {ids})"})]
+    text = str(a.get("answer", "")).strip()[:BOOK_ANSWER_CAP]
+    if not text:
+        return True, [Event(tick, "plan_interrupted", actor=ag.id,
+                            payload={"reason": "book_answer: empty answer"})]
+    prev = book.answers.get(qid)
+    book.answers[qid] = {"text": text, "author": ag.id, "tick": tick}
+    return True, [Event(tick, "book_answer_written", actor=ag.id, position=ag.pos,
+                        payload={"question": qid, "text": text,
+                                 "replaced": (prev or {}).get("author")})]
+
+
 def _wait(a, ag, world, tick):
     return True, []
 
@@ -255,4 +298,5 @@ def _wait(a, ag, world, tick):
 _HANDLERS = {"move_to": _move_to, "gather": _gather, "eat": _eat,
              "drop": _drop, "wait": _wait, "combine": _combine,
              "deposit": _deposit, "withdraw": _withdraw,
-             "say": _say, "give": _give}
+             "say": _say, "give": _give,
+             "book_note": _book_note, "book_answer": _book_answer}

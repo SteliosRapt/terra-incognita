@@ -1,0 +1,31 @@
+{
+  "version": "0.1",
+  "comment": "The epistemics questionnaire: the questions a society is implicitly (survey) or explicitly (book conditions) trying to answer. Ground truth for each is derived at run time by engine/questions.py from the run config, the generated map and the techtree - NEVER shown to agents.",
+  "static": [
+    {
+      "id": "time_energy",
+      "text": "How exactly does time pass here, and what does each moment cost you in energy - when resting versus when moving?"
+    },
+    {
+      "id": "regrow_berries",
+      "text": "Do berries grow back once picked? Where, and roughly how fast?"
+    },
+    {
+      "id": "regrow_wood",
+      "text": "Do trees grow back after being harvested? After how long?"
+    },
+    {
+      "id": "regrow_stone",
+      "text": "Does stone ever replenish, or is it finite?"
+    },
+    {
+      "id": "coverage",
+      "text": "Roughly what fraction of the world is forest, what fraction is mountain, and what fraction is water?"
+    },
+    {
+      "id": "combine_loss",
+      "text": "When an attempt to combine items fails, what happens to the ingredients?"
+    }
+  ],
+  "recipe_template": "What is the exact recipe to create {item} - which ingredients, how many of each, and under what special conditions does it work?"
+}

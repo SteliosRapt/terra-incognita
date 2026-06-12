@@ -10,6 +10,9 @@ runs/
 # local-only files unrelated to the project
 scratch/
 
+# secrets — the key also lives in the user env (OPENROUTER_API_KEY)
+openrouterapi.txt
+
 # tooling
 .playwright-mcp/
 .claude/

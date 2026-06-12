@@ -1,5 +1,66 @@
 # CHANGELOG / Design Notes
 
+## v0.38 — Epistemics instruments: the Book, world-questions, survey judge, ti.py CLI (2026-06-12)
+From the handwritten notes ("The epistemics of artificial society"): can a
+society identify how the world works — time, regeneration, terrain coverage,
+exact recipes, loss-on-failure — and *when* does it answer each question,
+under five book conditions?
+
+**World-questions (`configs/questions_v0.json` + `engine/questions.py`):**
+6 static questions + one per techtree recipe (auto-expands with swapped
+trees). Ground truth derived per run — coverage is *measured* on the
+generated map, not nominal — and written to `runs/<id>/ground_truth.json`.
+Never enters any agent prompt.
+
+**The Book (`book_condition` knob):** `none` (control) / `central` (placed on
+the nearest grass tile to map centre; read/write standing on or adjacent;
+marker structure visible in NEARBY, ASCII `B`, viewer sprite) / `librarian`
+(central + only `book_manager` — default first agent — may write; everyone
+may read at it; system prompt tells both sides) / `personal` (private book
+each, usable anywhere) / `cloud` (shared, usable anywhere). Per the notes:
+note entries are append-only with author+tick (never editable); per-question
+answers are editable, last write wins, author+tick recorded. New actions
+`book_note(text)` / `book_answer(question, answer)`; events
+`book_note_written` / `book_answer_written`; prompt gains a `== BOOK ==`
+section (full contents when readable, location-only pointer when a central
+book is out of reach). `none` is byte-identical to v0.37 (M1 hash
+`f10d156c…` reproduced; no rng touched).
+
+**Survey judge (`brains/survey.py`):** every N ticks (default 10) a separate
+free-model chain (owl-alpha first, so judging never eats the planners' gemma
+quota) reads each agent's beliefs+notes (and the shared book's answers, as
+subject "book") next to the ground truth and returns BINARY verdicts per
+question → `survey.jsonl`. Out-of-band: agents are never prompted, so
+measurement can't contaminate behavior. Change-gated: unchanged text is
+never re-judged. Analysis primitive: first-correct tick per question/subject.
+
+**ti.py — the experiment CLI** (phone/SSH-friendly, plain text):
+`run` (provider/preset/knowledge/book/survey/freeform/seed), `list`,
+`status`, `summary` (discoveries + final book answers + survey
+first-correct), `survey` (who answered what, when), `screenshot` (stdlib-only
+PNG of any tick of any run — viewer-replay-style reconstruction from
+config+events; prints the path so a remote agent can embed it in chat),
+`models`. Events flush every tick → status/screenshot work on live runs.
+
+**Freeform-thoughts knob** (notes p.2 "is this helpful?"): `run --freeform`
+lets models reason in prose around the JSON object (parser was already
+tolerant; ollama json_format auto-disabled). Strict remains default.
+
+**Models (`configs/openrouter.json`):** named presets + `make_provider`
+support (`--model` > `--preset` > `tier=paid` > default chain). Default stays
+gemma-4-31b:free (best tps); `owl` = openrouter/owl-alpha (smart free, 1M
+ctx); `nemotron-ultra` (~7 tps, overnight only); paid default now
+openai/gpt-5-nano ($0.05/M in). Judge chain: owl-alpha → gemma-4-26b → 31b.
+OPENROUTER_API_KEY set in the user env; key verified live (real completion,
+$9.78/$15 credits remaining); `openrouterapi.txt` gitignored.
+
+**Verified:** 50 tests pass (14 new: book conditions/access/immutability,
+ground truth, judge grading + change-gating, PNG determinism, freeform);
+M1 determinism PASS byte-identical, M2 PASS; mock E2E run with cloud book
+through the CLI; REAL openrouter run (4 agents × 40 ticks, central book,
+survey on): 0 parse failures, 12/12 judge calls ok on owl-alpha, 0 rate
+limits, $0.00, all-false verdicts (correct for 40-tick-old beliefs).
+
 ## v0.37 — Housekeeping: shared defaults, tests/, encoding fix (2026-06-11)
 **Encoding bugfix (behavioral):** `techtree.py` and `run_m2.py` opened text
 files without `encoding="utf-8"` — on this machine (cp1253 default) the

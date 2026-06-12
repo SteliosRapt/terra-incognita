@@ -24,7 +24,7 @@ class Tile:
 
 @dataclass
 class Structure:
-    type: str                    # "fire" | "farm" | "storehouse"
+    type: str                    # "fire" | "farm" | "storehouse" | "book"
     owner: str
     created: int
     expires_at: int = -1         # -1 = permanent
@@ -33,6 +33,17 @@ class Structure:
 
     def units(self) -> int:
         return sum(self.storage.values())
+
+
+@dataclass
+class Book:
+    """The book experiment (notes page 1): a list of open questions about how
+    the world works. Note entries are append-only and timestamped (never
+    editable); the answer to each question is editable — last write wins, with
+    author and tick recorded. Who can reach/write it is the book_condition."""
+    questions: list                                # [{"id", "text"}]
+    answers: dict = field(default_factory=dict)    # qid -> {"text","author","tick"}
+    entries: list = field(default_factory=list)    # [{"tick","author","text"}]
 
 
 class World:
@@ -44,6 +55,8 @@ class World:
         self.grid: list[list[Tile]] = []
         self.structures: dict[tuple[int, int], "Structure"] = {}
         self.techtree = None      # attached by Simulation
+        self.books: dict[str, Book] = {}      # "shared" or agent id (personal)
+        self.book_pos: tuple[int, int] | None = None   # central/librarian only
         self._generate()
 
     # ---------- generation ----------
@@ -160,6 +173,33 @@ class World:
                     out.append(((x, y), self.torus_dist(center, (x, y))))
         out.sort(key=lambda e: (e[1], e[0]))
         return [pos for pos, _ in out]
+
+    def book_access(self, agent_id: str, pos: tuple[int, int]):
+        """(book | None, writable, reason-if-denied). The single access rule
+        for all five book conditions:
+          none      - no book exists
+          central   - one shared book at book_pos; read/write standing on or
+                      next to it
+          librarian - central, but only cfg['book_manager'] may write
+          personal  - each agent its own book, always at hand, private
+          cloud     - one shared book, read/write from anywhere
+        """
+        cond = self.cfg.get("book_condition", "none")
+        if cond == "none":
+            return None, False, "there is no book in this world"
+        if cond == "personal":
+            return self.books[agent_id], True, None
+        book = self.books["shared"]
+        if cond == "cloud":
+            return book, True, None
+        if self.torus_dist(pos, self.book_pos) > 1:
+            bx, by = self.book_pos
+            return None, False, (f"the book is at ({bx}, {by}); stand on or "
+                                 "next to it to read or write")
+        if cond == "librarian" and agent_id != self.cfg.get("book_manager"):
+            return book, False, (f"only {self.cfg.get('book_manager')} may "
+                                 "write in the book")
+        return book, True, None
 
     def adjacent_structures(self, pos: tuple[int, int]) -> set:
         """Structure types on own tile or Chebyshev-adjacent tiles."""
