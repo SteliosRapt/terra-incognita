@@ -26,8 +26,17 @@ SYSTEM_TEMPLATE = (
     "gather from it; give gather a target x, y and you will walk there "
     "first. Beyond that you do NOT know how this world works. You can "
     "discover how to create things by combining items (action: combine), "
-    "but failures may destroy ingredients. You can talk to nearby agents. "
+    "but failures may destroy ingredients. You can talk to nearby agents — "
+    "your voice only carries a few tiles. "
     "Your goals: survive, and understand this world."
+)
+
+# embodied common sense, like the survival basics: an agent that has walked
+# its world knows its shape. Stated only when the sim provides world_size.
+WORLD_SHAPE_TEMPLATE = (
+    " The world is a {w}x{h} grid whose edges wrap around (stepping off one "
+    "side brings you out the opposite side, and the shortest path may cross "
+    "an edge)."
 )
 
 NOTES_CAP = 1500          # spec: ~1500 chars (open question 3 — revisit with transcripts)
@@ -63,13 +72,16 @@ _PLAN_DOC = (
     "collect several, gather at several positions.\n"
 )
 _SCHEMA_DOC = (
+    # the combine example must NOT be a real techtree recipe: models copy
+    # examples verbatim, which would hand them a free "discovery"
+    # (playtest 2026-06-13: the old wood 2 + stone 1 example WAS the axe)
     '{"reasoning": "<one short sentence: what you are doing and why>",\n'
     ' "updated_beliefs": ["<your current hypotheses about how this world works>", ...],\n'
     ' "updated_notes": "<your private scratchpad, rewritten in full, max 1500 chars>",\n'
     ' "plan": [{"action": "gather", "resource": "wood", "x": 3, "y": 4},\n'
     '          {"action": "gather", "resource": "wood", "x": 4, "y": 4},\n'
     '          {"action": "move_to", "x": 6, "y": 5},\n'
-    '          {"action": "combine", "items": {"wood": 2, "stone": 1}}]}'
+    '          {"action": "combine", "items": {"berries": 1, "wood": 1}}]}'
 )
 FORMAT_DOC = (_PLAN_DOC
               + "Respond ONLY with a JSON object, no other text:\n" + _SCHEMA_DOC)
@@ -118,6 +130,9 @@ def build_prompt(obs: Observation, persona: str | None = None,
                  freeform: bool = False) -> tuple[str, str]:
     me = obs.me
     system = SYSTEM_TEMPLATE.format(name=me["id"])
+    if obs.world_size:
+        system += WORLD_SHAPE_TEMPLATE.format(w=obs.world_size[0],
+                                              h=obs.world_size[1])
     if obs.book:
         cond = obs.book["condition"]
         system += " " + BOOK_SYSTEM["personal" if cond == "personal" else "shared"]
@@ -145,7 +160,10 @@ def build_prompt(obs: Observation, persona: str | None = None,
             near.append(f"{res} at " + ", ".join(f"({px}, {py})" for px, py in spots))
     for s in obs.nearby_structures:
         sx, sy = s["pos"]
-        near.append(f"a {s['type']} at ({sx}, {sy}), built by {s['owner']}")
+        if s["owner"] == "world":   # world-placed (e.g. the Book): nobody built it
+            near.append(f"a {s['type']} at ({sx}, {sy})")
+        else:
+            near.append(f"a {s['type']} at ({sx}, {sy}), built by {s['owner']}")
     for a in obs.nearby_agents:
         ax, ay = a["pos"]
         near.append(f"{a['id']} at ({ax}, {ay})")
@@ -158,6 +176,10 @@ def build_prompt(obs: Observation, persona: str | None = None,
 
     lines = [
         f"== STATUS == {status}",
+    ]
+    if obs.replan_reason:
+        lines.append(f"== WHY NOW == You are planning because {obs.replan_reason}")
+    lines += [
         "== YOU KNOW == " + ("; ".join(obs.knowledge) or "no confirmed recipes yet"),
         "== YOU BELIEVE == " + ("; ".join(obs.beliefs) or "(nothing yet)"),
         "== NOTES == " + (obs.notes or "(empty)"),

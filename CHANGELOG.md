@@ -1,5 +1,49 @@
 # CHANGELOG / Design Notes
 
+## v0.39 — Playtest fixes: recipe leak, WHY NOW, earshot feedback, torus doc (2026-06-13)
+Claude played 15 planner calls by hand (2 agents × ~65 ticks, central book,
+seed 42) through `scratch/play.py` — a replay driver where the operator IS
+the brain: it reruns the sim from t0 against recorded replies and prints the
+exact prompt of the first unanswered call. Context held up; five fixes came
+out of it.
+
+**Recipe leak (measurement bug):** the format example in `_SCHEMA_DOC`
+showed `combine {"wood": 2, "stone": 1}` — which IS the axe. Models copy
+examples verbatim, so every prior LLM run got a free "discovery" (suspect
+in gemma's axe@t81/pickaxe@t39, 06-12 run). Example is now
+`{"berries": 1, "wood": 1}` and `test_schema_example_combine_is_not_a_real_recipe`
+resolves the example against the techtree under all tile/tool contexts so
+a future techtree edit can't silently re-introduce a leak.
+
+**WHY NOW (prompt section):** agents couldn't tell "plan finished" from
+"plan discarded mid-experiment". New line after STATUS states the trigger:
+first decision / plan finished / step failed / N-tick check-in with steps
+set aside / someone spoke to you / survival reflex took over. The reflex
+case was found live: A01's auto-eat at t58 silently ate a 2-step experiment.
+Two new trigger tokens in `planner_called` payloads: `step_failed`, `reflex`.
+
+**Earshot feedback:** a directed say to an out-of-range target journals
+"(X was too far away to hear you.)" for the speaker. Before, "You said to
+A00: …" read as success and produced false-confidence coordination
+(observed at t33 and t55 in the playtest). In-range behavior unchanged.
+
+**Torus + voice documented (system prompt):** "The world is a {W}x{H} grid
+whose edges wrap around…" and "your voice only carries a few tiles" join
+the survival basics — embodied common sense, same rationale as berries=food
+(agents at y=4 saw NEARBY wood at y=31 with no way to read it as close).
+Observation gains `world_size` and `replan_reason` fields (default-empty:
+old constructors unaffected).
+
+**Cosmetics:** world-placed structures render without ", built by world";
+"a axe" → "an axe" (`_an()` in events.py).
+
+**Verified:** 61 tests pass (11 new in `tests/test_prompt_fixes.py`); M1
+determinism PASS, M2 determinism PASS. M1 hash moves `f10d156c…` →
+`cd920f0d…` solely from the new `step_failed`/`reflex` trigger tokens in
+`planner_called` events (scripted M1 agents do hit failed steps); no rng
+touched, world events unchanged. `AGENT_EXPERIENCE.md` added: section-by-
+section anatomy of the prompt with the played timeline.
+
 ## v0.38 — Epistemics instruments: the Book, world-questions, survey judge, ti.py CLI (2026-06-12)
 From the handwritten notes ("The epistemics of artificial society"): can a
 society identify how the world works — time, regeneration, terrain coverage,

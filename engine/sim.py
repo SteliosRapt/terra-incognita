@@ -106,7 +106,32 @@ class Simulation:
         return out
 
     # ---------- observation (the ONLY thing brains see) ----------
-    def build_observation(self, ag: AgentState) -> Observation:
+    def _replan_reason(self, ag: AgentState, trigger: str, steps_left: int) -> str:
+        """One plain-English line for the prompt: why the planner runs now.
+        Without it, models can't tell a finished plan from a discarded one
+        (playtest 2026-06-13: the timer silently ate experiments mid-plan)."""
+        steps = f"{steps_left} step{'s' if steps_left != 1 else ''}"
+        if trigger == "spoken_to":
+            return ("someone spoke to you" +
+                    (f" (your unfinished plan, {steps}, was set aside — "
+                     "re-issue what you still want)" if steps_left else "."))
+        if trigger == "timer":
+            return (f"of the routine {self.replan_interval}-tick check-in; "
+                    f"your unfinished plan ({steps} left) was set aside — "
+                    "re-issue what you still want.")
+        if trigger == "step_failed":
+            return ("a step of your plan failed (see RECENT EVENTS for the "
+                    "reason); the rest of that plan was dropped.")
+        if trigger == "reflex":
+            return ("your survival reflex took over and ate food (your energy "
+                    "was critically low); whatever you were doing before was "
+                    "dropped.")
+        if ag.last_plan_tick < 0:
+            return "this is your first decision."
+        return "your previous plan finished."
+
+    def build_observation(self, ag: AgentState,
+                          replan_reason: str = "") -> Observation:
         w = self.world
         R = self.vis_radius
         res = {
@@ -150,7 +175,9 @@ class Simulation:
             journal_tail=ag.journal[-12:],
             knowledge=knowledge,
             beliefs=list(ag.beliefs), notes=ag.notes,
-            book=book_view)
+            book=book_view,
+            world_size=(w.W, w.H),
+            replan_reason=replan_reason)
 
     # ---------- one tick ----------
     def step(self):
@@ -162,7 +189,7 @@ class Simulation:
         # replan triggers, reflexes. Decides who needs the planner this tick.
         order = sorted(self.agents.keys())
         self.rng.shuffle(order)
-        to_plan: list[tuple[str, str]] = []   # (agent, trigger)
+        to_plan: list[tuple[str, str, int]] = []   # (agent, trigger, steps_left)
         for name in order:
             ag = self.agents[name]
             if not ag.alive:
@@ -179,7 +206,8 @@ class Simulation:
                     evs.append(Event(self.tick, "spoiled", actor=name,
                                      payload={"item": "berries", "qty": spoiled}))
             # forced replan triggers (spec §3): directed speech, or K-tick timer
-            trigger = "plan_done"
+            steps_left = len(ag.plan)
+            trigger = "step_failed" if ag.interrupted else "plan_done"
             if ag.plan and ag.replan_flag:
                 ag.plan = []
                 trigger = "spoken_to"
@@ -193,20 +221,28 @@ class Simulation:
                 if ag.inventory.get("cooked_food", 0) > 0:
                     ag.plan = [{"action": "eat", "item": "cooked_food"}]
                     ag.intention = "reflex: eat"
+                    ag.reflex_fired = True
                 elif ag.inventory.get("berries", 0) > 0:
                     ag.plan = [{"action": "eat", "item": "berries"}]
                     ag.intention = "reflex: eat"
+                    ag.reflex_fired = True
             if not ag.plan:
-                to_plan.append((name, trigger))
+                if trigger == "plan_done" and ag.reflex_fired:
+                    trigger = "reflex"
+                to_plan.append((name, trigger, steps_left))
+                ag.interrupted = False
+                ag.reflex_fired = False
 
         # 2b. PLANNING — all observations snapshot the same post-upkeep world
         # (simultaneous decisions). Brains that declare parallel_safe (network
         # LLM providers) are called concurrently: with 10 agents on a ~10s
         # remote model this is the difference between ~100s and ~10s per tick.
         if to_plan:
-            obs = {name: self.build_observation(self.agents[name])
-                   for name, _ in to_plan}
-            names = [name for name, _ in to_plan]
+            obs = {name: self.build_observation(
+                       self.agents[name],
+                       self._replan_reason(self.agents[name], trig, left))
+                   for name, trig, left in to_plan}
+            names = [name for name, _, _ in to_plan]
             if (len(names) > 1
                     and all(getattr(self.brains[n], "parallel_safe", False)
                             for n in names)):
@@ -217,7 +253,7 @@ class Simulation:
                         lambda n: self.brains[n].plan(obs[n]), names)))
             else:
                 results = {n: self.brains[n].plan(obs[n]) for n in names}
-            for name, trigger in to_plan:
+            for name, trigger, _ in to_plan:
                 ag = self.agents[name]
                 res = results[name]
                 ag.plan, ag.intention = res.plan, res.intention
@@ -243,6 +279,7 @@ class Simulation:
                                            self.agents)
                 if any(e.type == "plan_interrupted" for e in aevs):
                     ag.plan = []   # failed step invalidates the rest → replan next tick
+                    ag.interrupted = True   # next consultation says WHY NOW = step failed
                 elif done:
                     ag.plan.pop(0)
                     if not ag.plan:
@@ -291,6 +328,13 @@ class Simulation:
                     # being spoken to directly triggers a replan (spec §3)
                     if ev.target and ev.target in ev.visibility:
                         self.agents[ev.target].replan_flag = True
+                    elif ev.target and ev.actor:
+                        # earshot feedback: without it the speaker's journal
+                        # reads "You said to X" and they believe X heard
+                        # (playtest 2026-06-13: false-confidence coordination)
+                        self.agents[ev.actor].journal_add(
+                            f"[t{ev.tick}] ({ev.target} was too far away "
+                            "to hear you.)")
                     # measurement: who has heard which recipes mentioned
                     mentions = self._recipe_mentions(ev.payload["message"])
                     if mentions:

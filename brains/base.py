@@ -17,6 +17,8 @@ class Observation:
     beliefs: list = field(default_factory=list)     # mind-owned hypotheses
     notes: str = ""                                  # mind-owned scratchpad
     book: dict | None = None                         # book view (None = no book condition)
+    world_size: tuple | None = None                  # (W, H); the map wraps at the edges
+    replan_reason: str = ""                          # why the planner is consulted right now
 
 
 @dataclass
