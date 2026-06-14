@@ -9,21 +9,16 @@ from experiments.benchmark_gemma4 import (build_run_command, gemma4_matrix, shou
                                           write_reports)
 
 
-def test_gemma4_matrix_has_ten_exact_entries():
+def test_gemma4_matrix_has_two_paid_nonthinking_openrouter_entries():
     rows = gemma4_matrix()
 
-    assert len(rows) == 10
+    assert len(rows) == 2
+    assert all(row.thinking is False for row in rows)
+    assert all(row.provider == "openrouter" for row in rows)
+    assert all(not row.model.endswith(":free") for row in rows)
     assert {(row.provider, row.model, row.thinking) for row in rows} == {
-        ("openrouter", "google/gemma-4-31b-it:free", True),
-        ("openrouter", "google/gemma-4-31b-it:free", False),
-        ("openrouter", "google/gemma-4-31b-it", True),
         ("openrouter", "google/gemma-4-31b-it", False),
-        ("openrouter", "google/gemma-4-26b-a4b-it:free", True),
-        ("openrouter", "google/gemma-4-26b-a4b-it:free", False),
-        ("openrouter", "google/gemma-4-26b-a4b-it", True),
         ("openrouter", "google/gemma-4-26b-a4b-it", False),
-        ("ollama", "gemma4:e2b", True),
-        ("ollama", "gemma4:e2b", False),
     }
 
 

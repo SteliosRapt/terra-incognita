@@ -1,5 +1,49 @@
 # CHANGELOG / Design Notes
 
+## v0.41 — Run performance telemetry + Gemma 4 benchmark (2026-06-14)
+Branch `codex/run-performance-benchmark`. Ordinary runs now emit streaming
+request telemetry (`requests.jsonl`), per-tick timings (`ticks.jsonl`), and an
+aggregate `performance.json` (speed/token/parse/cost, planner vs survey vs
+combined). Providers return structured `CompletionResult`/`CompletionMetrics`
+while keeping the old `complete()` string API; OpenRouter and Ollama stream with
+explicit thinking controls. New `experiments/performance.py` aggregates,
+`experiments/benchmark_gemma4.py` orchestrates, `py ti.py benchmark gemma4` runs
+the matrix (`--report-only` rebuilds reports without calls).
+
+**Benchmark scope.** Each cell: 5 agents × 100 ticks, seed 42, blind, no book,
+survey off, no-thinking, warm-up, `--max-tokens 8192`. The matrix was reduced to
+the two **paid** OpenRouter routes after live testing (below). Reports under
+`runs/benchmark_gemma4/benchmark_results.{json,csv,md}`; per-cell status in
+`benchmark_status.json`.
+
+**Results (both cells complete, 100/100 ticks; arithmetic reconciled against raw
+`requests.jsonl` — cost to the cent, `completion == reasoning + visible`, 0
+survey requests):**
+
+| Model (resolved snapshot) | Total time | Avg tick | TTFT | TPS | Tok/plan | Total cost | First-attempt parse fail | Final parse fail |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `gemma-4-31b-it` (…-20260402) | 815.0s | 8150ms | 1632ms | 43.9 | 1712 | $0.022413 | 37.3% | 3.0% |
+| `gemma-4-26b-a4b-it` (…-20260403) | 371.4s | 3714ms | 1431ms | 62.8 | 1476 | $0.011397 | 0.0% | 0.0% |
+
+The smaller 26B route was ~2.2× faster, ~half the cost, and far more JSON-reliable
+(0% vs 37.3% first-attempt parse failures) than 31B; 31B recovered to 3.0% final
+failures via retry. (31B discovered axe@t69, 0 deaths; 26B taught nothing, 1
+death — single seed, not significant.) p50 tick is ~0–1ms because planning only
+fires periodically; the cost lives in the p95 planning ticks.
+
+**Dropped/unsupported modes (explicit):**
+- `:free` OpenRouter routes — once a day's free-token budget is spent they throttle
+  to per-request 429s; the warm-up request fails first and aborts the run. A free
+  run *can* succeed when the budget is fresh (a 31B-free thinking run reached
+  ~tick 54 earlier) but it's unreliable for an unattended matrix.
+- thinking-on — works on both backends (reasoning control honored, reasoning
+  tokens reported distinctly), but roughly triples wall-time/cost via growing
+  reasoning traces; dropped for throughput-focused benchmarking. Still available
+  via `py ti.py run --thinking on`.
+- local Ollama `gemma4:e2b` — runs fine but exposes no separate `message.thinking`
+  stream even with thinking requested, so `reasoning_tokens` stays 0; dropped from
+  the matrix per request.
+
 ## v0.40 — DiffusionGemma 2×2 shelter experiment (2026-06-14)
 Branch `diffusiongemma-shelter`, off `v0.39-prompt-fixes` (verified to be a
 superset of `main`: it already carries the v0.38 Book/epistemics work the Book

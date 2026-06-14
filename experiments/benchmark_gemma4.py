@@ -29,20 +29,12 @@ class BenchmarkEntry:
 
 
 def gemma4_matrix() -> list[BenchmarkEntry]:
-    entries = []
     remote = [
-        ("31b-free", "google/gemma-4-31b-it:free"),
         ("31b-paid", "google/gemma-4-31b-it"),
-        ("26b-free", "google/gemma-4-26b-a4b-it:free"),
         ("26b-paid", "google/gemma-4-26b-a4b-it"),
     ]
-    for slug, model in remote:
-        for thinking in (False, True):
-            entries.append(BenchmarkEntry(slug, "openrouter", model, thinking))
-    for thinking in (False, True):
-        entries.append(BenchmarkEntry("local-e2b", "ollama", "gemma4:e2b",
-                                      thinking))
-    return entries
+    return [BenchmarkEntry(slug, "openrouter", model, thinking=False)
+            for slug, model in remote]
 
 
 def _read_json(path: pathlib.Path) -> dict | None:
@@ -160,20 +152,24 @@ def write_reports(runs_root: pathlib.Path = RUNS,
         writer = csv.DictWriter(f, fieldnames=REPORT_FIELDS)
         writer.writeheader()
         writer.writerows(rows)
+    def fmt(value: float | None, digits: int) -> str:
+        return "-" if value is None else f"{value:.{digits}f}"
+
     lines = [
         "# Gemma 4 Benchmark Results",
         "",
-        "| Model | Mode | Complete | Avg tick ms | TTFT ms | TPS | Tokens/plan | Cost | Parse fail |",
+        "| Model | Mode | Complete | Avg tick ms | TTFT ms | TPS | Tokens/plan | Cost USD | First-attempt parse fail |",
         "|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         mode = "thinking" if row["thinking"] else "no-thinking"
         lines.append(
             f"| {row['model']} | {mode} | {row['complete']} | "
-            f"{row['average_tick_ms']} | {row['average_ttft_ms']} | "
-            f"{row['average_generation_tps']} | "
-            f"{row['average_total_tokens_per_plan']} | {row['total_cost_usd']} | "
-            f"{row['first_attempt_parse_failure_pct']}% |")
+            f"{fmt(row['average_tick_ms'], 1)} | {fmt(row['average_ttft_ms'], 0)} | "
+            f"{fmt(row['average_generation_tps'], 1)} | "
+            f"{fmt(row['average_total_tokens_per_plan'], 1)} | "
+            f"{fmt(row['total_cost_usd'], 6)} | "
+            f"{fmt(row['first_attempt_parse_failure_pct'], 1)}% |")
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"json": json_path, "csv": csv_path, "markdown": md_path}
 
