@@ -1,6 +1,6 @@
 """sim.py — tick loop per spec §3c: WORLD PHASE → AGENT PHASE → COMMIT."""
 from __future__ import annotations
-import json, os, random, re
+import json, os, random, re, time
 from .world import World, Structure, Book, FOREST, MOUNTAIN
 from .techtree import TechTree
 from .questions import load_questions
@@ -181,6 +181,9 @@ class Simulation:
 
     # ---------- one tick ----------
     def step(self):
+        step_tick = self.tick
+        step_started = time.monotonic()
+        planning_ms = planner_calls = retries = final_parse_failures = 0
         evs: list[Event] = []
         # 1. WORLD PHASE
         evs += self.world.world_phase(self.tick)
@@ -243,6 +246,7 @@ class Simulation:
         # LLM providers) are called concurrently: with 10 agents on a ~10s
         # remote model this is the difference between ~100s and ~10s per tick.
         if to_plan:
+            planning_started = time.monotonic()
             obs = {name: self.build_observation(
                        self.agents[name],
                        self._replan_reason(self.agents[name], trig, left))
@@ -265,6 +269,12 @@ class Simulation:
                         lambda n: self.brains[n].plan(obs[n]), names)))
             else:
                 results = {n: self.brains[n].plan(obs[n]) for n in names}
+            planning_ms = round((time.monotonic() - planning_started) * 1000)
+            planner_calls = len(results)
+            retries = sum(max(0, r.planning_attempts - 1)
+                          for r in results.values())
+            final_parse_failures = sum(bool(r.parse_error)
+                                       for r in results.values())
             for name, trigger, _ in to_plan:
                 ag = self.agents[name]
                 res = results[name]
@@ -354,6 +364,15 @@ class Simulation:
                             if vid != ev.actor:
                                 self.agents[vid].heard_recipes |= mentions
             self.logf.write(ev.to_json() + "\n")
+        self.last_step_metrics = {
+            "tick": step_tick,
+            "started_at": time.time() - (time.monotonic() - step_started),
+            "duration_ms": round((time.monotonic() - step_started) * 1000),
+            "planning_ms": planning_ms,
+            "planner_calls": planner_calls,
+            "retries": retries,
+            "final_parse_failures": final_parse_failures,
+        }
         self.tick += 1
 
     def run(self, ticks: int, render_every: int = 0):
