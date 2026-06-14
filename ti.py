@@ -697,6 +697,15 @@ def cmd_models(args):
         print(f"  {name:<16} {' -> '.join(chain)}{note}")
 
 
+def cmd_benchmark(args):
+    if args.suite != "gemma4":
+        sys.exit(f"unknown benchmark suite: {args.suite}")
+    from experiments.benchmark_gemma4 import run_gemma4_benchmark
+    paths = run_gemma4_benchmark(report_only=args.report_only)
+    for kind, path in paths.items():
+        print(f"{kind}: {path.resolve()}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="ti", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -766,6 +775,11 @@ def main():
 
     d = sub.add_parser("models", help="show model chains and presets")
     d.set_defaults(fn=cmd_models)
+
+    b = sub.add_parser("benchmark", help="run a reproducible model benchmark")
+    b.add_argument("suite", choices=["gemma4"])
+    b.add_argument("--report-only", action="store_true")
+    b.set_defaults(fn=cmd_benchmark)
 
     args = p.parse_args()
     args.fn(args)
