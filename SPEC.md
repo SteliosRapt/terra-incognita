@@ -32,6 +32,8 @@ Map generation: seeded random; ~15% forest, ~8% mountain, 3–5 berry patch clus
 Agent {
   id, name, position (x, y)
   energy: 0–100        # -1/tick idle, -2/tick if moved; 0 ⇒ death (removed)
+                       # exception: starting a tick on a Shelter tile costs 0
+                       # (resting) or 1 (leaving it) — see the tech tree below
   inventory: dict      # capacity 8 slots (1 slot = 5 units of one item type)
   tools: list          # equipped items (axe, pickaxe...)
   knowledge: set       # recipes this agent has CONFIRMED (by crafting or being taught)
@@ -50,7 +52,7 @@ Eating berries: +25 energy. Cooked food (if discovered): +50. Death is permanent
 
 ## 2. The Tech Tree (exact v0 tree)
 
-The tree lives in `techtree.json`. The engine reads it; **the agents never do** (except in the "oracle" control condition). 8 nodes, 3 tiers, including two deliberately non-obvious recipes.
+The tree lives in `techtree.json`. The engine reads it; **the agents never do** (except in the "oracle" control condition). 9 nodes, 3 tiers, including deliberately non-obvious recipes (a contextual condition, a tool prerequisite, and a single-item self-combine).
 
 ```
 TIER 0 (innate actions — agents know these from the start)
@@ -60,17 +62,24 @@ TIER 1
   [Axe]      2 wood + 1 stone  → tool: wood yield ×3
   [Pickaxe]  1 wood + 2 stone  → tool: stone yield ×3
   [Basket]   3 wood            → +8 inventory slots
+  [Brick]    1 stone           → item: a brick  ← non-obvious (a single item combined BY ITSELF)
 
 TIER 2
   [Fire]     1 wood + 2 stone, AND must be standing on a grass tile   ← non-obvious (condition!)
              → creates a Fire entity on the tile, lasts 100 ticks
   [Farm]     4 wood + 2 berries, requires Axe in tools                ← non-obvious (tool-gated)
              → tile becomes Farm: yields 3 berries every 10 ticks, harvestable by anyone
+  [Shelter]  4 bricks          → PERMANENT structure on the tile
+             → at most one per builder (excess attempts rejected, bricks kept);
+               anyone may use any shelter — standing on one costs 0 energy/tick,
+               leaving it costs 1 (vs the normal 1 idle / 2 moving)
 
 TIER 3
   [Cooked food]  1 berries, must be adjacent to a Fire                → +50 energy food, never spoils
   [Storehouse]   6 wood + 4 stone, requires Pickaxe                   → shared 40-slot container on tile
 ```
+
+The **brick → shelter** branch and the `--combine-note` hint ("An item can sometimes be combined by itself.") are the subject of the DiffusionGemma 2×2 study — see `DIFFUSIONGEMMA_EXPERIMENT_PLAN.md`.
 
 **Why these two "non-obvious" recipes matter:** Fire requires a *contextual condition* (tile type), Farm requires a *tool prerequisite*. Pure ingredient-mixing won't find them — agents need hypothesis refinement ("wood+stone failed... but it failed *differently* on grass?"). This is the "custom physics" from your original email, made concrete and measurable.
 

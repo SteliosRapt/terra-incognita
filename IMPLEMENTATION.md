@@ -34,6 +34,8 @@ Wire `techtree.py` into `actions.py` (combine), implement produces/effects: tool
 ### M5 — Science
 Experiment runner: takes a conditions YAML, runs N seeds per cell (sequential is fine), aggregates. Pilot: Blind vs Oracle, 3 seeds. Then RQ1 sweep.
 
+First concrete instance shipped (v0.40): `experiments/diffusiongemma_matrix.py` builds a Note×Book 2×2 from `configs/experiments/diffusiongemma_2x2.json` (one DiffusionGemma model load, batched per tick, completed cells skipped on rerun), and `experiments/analyze_diffusiongemma.py` aggregates it; `notebooks/diffusiongemma_colab_2x2.ipynb` runs it on a Colab GPU. One seed per cell → exploratory, not the N-seed RQ1 sweep yet.
+
 ## Testing strategy
 - Unit: engine math (energy, capacity, regrowth, visibility radius sets).
 - Property: random action sequences never produce negative inventories / energy > 100 / events referencing dead agents.

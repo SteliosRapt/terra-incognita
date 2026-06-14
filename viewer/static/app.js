@@ -928,6 +928,7 @@ $("btnCustom").onclick = () => {
     preset: $("fPreset").value,
     provider: $("fProvider").value, model: $("fModel").value || null,
     condition: $("fCondition").value, agents: n,
+    combine_note: $("fCombineNote").checked,
     ticks: +$("fTicks").value, seed: +$("fSeed").value,
     name: $("fName").value || null,
     agent_names: namesFor(n),
@@ -1074,10 +1075,16 @@ food automatically below 30 energy. This split — slow deliberate planner, fast
 dumb executor — is the architecture being tested.</p>
 
 <h2>▸ The hidden tech tree (spoilers)</h2>
-<p>axe · pickaxe · basket (tier 1) → fire · farm (tier 2) → cooked food ·
-storehouse (tier 3). Conditions make it non-obvious: fire needs the same
-ingredients as a pickaxe but standing on grass; cooked food needs a fire
-adjacent; the farm needs an axe in hand.</p>
+<p>axe · pickaxe · basket · brick (tier 1) → fire · farm · shelter (tier 2) →
+cooked food · storehouse (tier 3). Conditions make it non-obvious: fire needs
+the same ingredients as a pickaxe but standing on grass; cooked food needs a
+fire adjacent; the farm needs an axe in hand.</p>
+<p><b>Brick &amp; shelter.</b> A single stone combined <i>by itself</i> becomes a
+brick; four bricks raise a <b>permanent shelter</b> (the greener square). Each
+agent may build only one, but anyone may use any shelter: standing on one costs
+<b>0 energy</b> per tick (vs 1 idle / 2 moving), and leaving one costs just 1.
+The <code>combine note</code> toggle in the Run tab adds the hint “An item can
+sometimes be combined by itself.” to the prompt — the brick experiment knob.</p>
 
 <h2>▸ What's next (imminent goals)</h2>
 <ul>

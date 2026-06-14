@@ -298,6 +298,7 @@ class RunManager:
 
             cfg = dict(BASE, seed=seed, n_agents=n_agents,
                        knowledge_condition=condition,
+                       combine_note=bool(params.get("combine_note", False)),
                        replan_interval=int(params.get("replan", 15)))
             names = clean_names(params.get("agent_names"), n_agents)
             if names:
@@ -327,6 +328,7 @@ class RunManager:
 
             def brain(prov):
                 return InspectableBrain(prov, telemetry_path=str(telemetry),
+                                        combine_note=cfg["combine_note"],
                                         store=self.prompt_store,
                                         store_lock=self.prompt_lock,
                                         latencies=self.latencies)

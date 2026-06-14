@@ -11,9 +11,14 @@ agents, who must discover them by experimentation.
   defaults.py holds the canonical run config shared by scripts and viewer
 - brains/ — ForagerBrain, RandomScientistBrain, LLMPlannerBrain + providers
   (mock / ollama / anthropic / openrouter)
-- configs/techtree_v0.json — the hidden ground-truth technology tree
-- viewer/ — live dashboard (`py viewer/server.py`): run configurator, agents,
-  events, stats, replay of past runs
+- configs/techtree_v0.json — the hidden ground-truth technology tree;
+  configs/experiments/ — experiment matrix definitions
+- viewer/ — live dashboard (`py viewer/server.py`): run configurator (incl. the
+  combine-note knob), agents, events, stats, replay of past runs
+- ti.py — experiment CLI (`py ti.py run …`, list/status/summary/screenshot)
+- experiments/ — the DiffusionGemma 2×2 shelter study: matrix runner + analyzer
+  (see DIFFUSIONGEMMA_EXPERIMENT_PLAN.md)
+- notebooks/diffusiongemma_colab_2x2.ipynb — Colab GPU runner for that study
 - run_m1.py / run_m2.py / run_m3.py — milestone acceptance scripts
 - tests/ — pytest suite (`py -m pytest`), no LLM or network calls
 
