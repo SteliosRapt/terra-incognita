@@ -10,6 +10,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from brains.providers import OpenRouterProvider, make_provider
+from ti import cost_breakdown
 
 
 class FakeResponse:
@@ -20,6 +21,21 @@ class FakeResponse:
 
     def json(self):
         return self._body
+
+    def iter_lines(self):
+        if "error" in self._body:
+            lines = ["data: " + json.dumps(self._body), "data: [DONE]"]
+        elif self._body:
+            message = self._body["choices"][0]["message"]
+            chunk = {
+                "model": "routed/test",
+                "choices": [{"delta": {"content": message["content"]}}],
+                "usage": self._body.get("usage") or {},
+            }
+            lines = ["data: " + json.dumps(chunk), "data: [DONE]"]
+        else:
+            lines = []
+        return iter(line.encode("utf-8") for line in lines)
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -38,9 +54,11 @@ class FakeRequests:
     def __init__(self, *responses):
         self.responses = list(responses)
         self.models_called = []
+        self.bodies = []
 
-    def post(self, url, headers=None, json=None, timeout=None):
+    def post(self, url, headers=None, json=None, timeout=None, stream=None):
         self.models_called.append(json["model"])
+        self.bodies.append(json)
         return self.responses.pop(0)
 
 
@@ -61,9 +79,61 @@ def test_happy_path_uses_primary_and_tracks_usage(tmp_path):
     assert p.totals["completion_tokens"] == 50
     assert p.totals["cost_usd"] == pytest.approx(0.0012)
     rec = json.loads(cost_file.read_text(encoding="utf-8").strip())
-    assert rec["model"] == "m/a:free"
+    assert rec["model"] == "routed/test"
     assert rec["cost_usd"] == pytest.approx(0.0012)
     assert rec["total_calls"] == 1
+
+
+def test_reasoning_effort_is_sent_and_detailed_usage_is_recorded(tmp_path):
+    cost_file = tmp_path / "costs.jsonl"
+    body = ok_body("hello", cost=0.0042, pt=120, ct=80)
+    body["usage"]["prompt_tokens_details"] = {"cached_tokens": 70}
+    body["usage"]["completion_tokens_details"] = {"reasoning_tokens": 55}
+    fake = FakeRequests(FakeResponse(200, body))
+    p = make(fake, reasoning_effort="high", max_tokens=8192,
+             cost_path=str(cost_file))
+
+    assert p.complete("sys", "user") == "hello"
+    assert fake.bodies[0]["reasoning"] == {"effort": "high"}
+    assert fake.bodies[0]["max_tokens"] == 8192
+    assert p.totals["cached_tokens"] == 70
+    assert p.totals["reasoning_tokens"] == 55
+    rec = json.loads(cost_file.read_text(encoding="utf-8").strip())
+    assert rec["cached_tokens"] == 70
+    assert rec["reasoning_tokens"] == 55
+
+
+def test_cost_breakdown_groups_planner_and_survey_models(tmp_path):
+    planner = tmp_path / "costs.jsonl"
+    survey = tmp_path / "survey_costs.jsonl"
+    planner.write_text(
+        json.dumps({"model": "deepseek/v4", "prompt_tokens": 100,
+                    "cached_tokens": 40, "completion_tokens": 80,
+                    "reasoning_tokens": 50, "cost_usd": 0.002}) + "\n" +
+        json.dumps({"model": "deepseek/v4", "prompt_tokens": 120,
+                    "cached_tokens": 0, "completion_tokens": 60,
+                    "reasoning_tokens": 20, "cost_usd": 0.003}) + "\n",
+        encoding="utf-8")
+    survey.write_text(
+        json.dumps({"model": "judge/free", "prompt_tokens": 200,
+                    "completion_tokens": 30, "cost_usd": 0}) + "\n",
+        encoding="utf-8")
+
+    rows, total = cost_breakdown({"planner": planner, "survey": survey})
+
+    assert rows == [
+        {"role": "planner", "model": "deepseek/v4", "calls": 2,
+         "prompt_tokens": 220, "cached_tokens": 40,
+         "completion_tokens": 140, "reasoning_tokens": 70,
+         "visible_output_tokens": 70, "cost_usd": pytest.approx(0.005)},
+        {"role": "survey", "model": "judge/free", "calls": 1,
+         "prompt_tokens": 200, "cached_tokens": 0,
+         "completion_tokens": 30, "reasoning_tokens": 0,
+         "visible_output_tokens": 30, "cost_usd": 0},
+    ]
+    assert total["calls"] == 3
+    assert total["prompt_tokens"] == 420
+    assert total["cost_usd"] == pytest.approx(0.005)
 
 
 def test_429_falls_back_to_next_model_and_cooldown_sticks():

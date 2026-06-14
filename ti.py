@@ -53,6 +53,65 @@ def read_events(run_dir: pathlib.Path) -> list[dict]:
     return out
 
 
+def cost_breakdown(role_paths: dict[str, pathlib.Path]) -> tuple[list[dict], dict]:
+    """Aggregate OpenRouter ledgers by experiment role and routed model."""
+    fields = ("calls", "prompt_tokens", "cached_tokens", "completion_tokens",
+              "reasoning_tokens", "visible_output_tokens", "cost_usd")
+    groups: dict[tuple[str, str], dict] = {}
+    total = {field: 0.0 if field == "cost_usd" else 0 for field in fields}
+    for role, path in role_paths.items():
+        if not path.exists():
+            continue
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                key = (role, rec.get("model", "unknown"))
+                row = groups.setdefault(key, {
+                    "role": role, "model": key[1],
+                    **{field: 0.0 if field == "cost_usd" else 0
+                       for field in fields},
+                })
+                completion = rec.get("completion_tokens", 0) or 0
+                reasoning = rec.get("reasoning_tokens", 0) or 0
+                values = {
+                    "calls": 1,
+                    "prompt_tokens": rec.get("prompt_tokens", 0) or 0,
+                    "cached_tokens": rec.get("cached_tokens", 0) or 0,
+                    "completion_tokens": completion,
+                    "reasoning_tokens": reasoning,
+                    "visible_output_tokens": max(0, completion - reasoning),
+                    "cost_usd": rec.get("cost_usd", 0.0) or 0.0,
+                }
+                for field, value in values.items():
+                    row[field] += value
+                    total[field] += value
+    rows = [groups[key] for key in sorted(groups)]
+    return rows, total
+
+
+def print_cost_breakdown(run_dir: pathlib.Path):
+    rows, total = cost_breakdown({
+        "planner": run_dir / "costs.jsonl",
+        "survey": run_dir / "survey_costs.jsonl",
+    })
+    if not rows:
+        return
+    print("\ncost breakdown:")
+    for row in rows:
+        print(f"  {row['role']:<7} {row['model']}: {row['calls']} calls | "
+              f"{row['prompt_tokens']} input ({row['cached_tokens']} cached) | "
+              f"{row['reasoning_tokens']} reasoning + "
+              f"{row['visible_output_tokens']} visible = "
+              f"{row['completion_tokens']} output | ${row['cost_usd']:.6f}")
+    print(f"  TOTAL: {total['calls']} calls | {total['prompt_tokens']} input "
+          f"({total['cached_tokens']} cached) | {total['reasoning_tokens']} "
+          f"reasoning + {total['visible_output_tokens']} visible = "
+          f"{total['completion_tokens']} output | ${total['cost_usd']:.6f}")
+
+
 def latest_run() -> pathlib.Path:
     cands = [d for d in RUNS.iterdir()
              if d.is_dir() and (d / "config.json").exists()
@@ -328,6 +387,10 @@ def cmd_run(args):
         spec["host"] = args.host
     if args.provider == "openrouter":
         spec["cost_path"] = str(run_dir / "costs.jsonl")
+        if args.reasoning_effort != "none":
+            spec["reasoning_effort"] = args.reasoning_effort
+        if args.max_tokens:
+            spec["max_tokens"] = args.max_tokens
     if args.provider == "ollama" and args.freeform:
         spec["json_format"] = False   # freeform prose around the JSON object
 
@@ -366,8 +429,12 @@ def cmd_run(args):
             with open(OPENROUTER_CONFIG, encoding="utf-8") as f:
                 judge_models = json.load(f)["judge_models"]
             (run_dir / "survey.jsonl").write_text("", encoding="utf-8")
-            judge = SurveyJudge(make_provider({"backend": "openrouter",
-                                               "model": ",".join(judge_models)}),
+            judge_provider = make_provider({
+                "backend": "openrouter",
+                "model": ",".join(judge_models),
+                "cost_path": str(run_dir / "survey_costs.jsonl"),
+            })
+            judge = SurveyJudge(judge_provider,
                                 questions, truth, str(run_dir / "survey.jsonl"))
 
     print(f"run {run_dir.name}: {args.agents} agents x {args.ticks} ticks | "
@@ -376,6 +443,8 @@ def cmd_run(args):
           + (f"/{args.model}" if args.model else "")
           + f" | knowledge={args.condition} book={args.book} seed={args.seed}"
           + (" | freeform" if args.freeform else "")
+          + (f" | reasoning={args.reasoning_effort}"
+             if args.reasoning_effort != "none" else "")
           + (f" | survey every {args.survey_every}t" if judge else " | survey off"),
           flush=True)
 
@@ -403,11 +472,7 @@ def cmd_run(args):
         answered = sorted((qid, min(t.values())) for qid, t in fc.items() if t)
         line = " ".join(f"{q}@t{t}" for q, t in answered) or "(none judged correct)"
         print(f"survey: {judge_calls} judge calls | first-correct: {line}")
-    totals = getattr(shared.get("provider"), "totals", None)
-    if totals:
-        print(f"spend: {totals['calls']} calls | {totals['prompt_tokens']} in / "
-              f"{totals['completion_tokens']} out tokens | "
-              f"${totals['cost_usd']:.4f} | rate-limit hits {totals['rate_limited']}")
+    print_cost_breakdown(run_dir)
     print(f"\nrun dir: {run_dir.resolve()}")
 
 
@@ -594,6 +659,11 @@ def main():
     r.add_argument("--ticks", type=int, default=500)
     r.add_argument("--seed", type=int, default=42)
     r.add_argument("--replan", type=int, default=15)
+    r.add_argument("--reasoning-effort",
+                   choices=["none", "minimal", "low", "medium", "high", "xhigh"],
+                   default="none", help="OpenRouter reasoning effort")
+    r.add_argument("--max-tokens", type=int, default=None,
+                   help="provider completion-token ceiling")
     r.add_argument("--freeform", action="store_true",
                    help="let models think in prose around the JSON (ablation)")
     r.add_argument("--combine-note", choices=["on", "off"], default="off",

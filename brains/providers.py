@@ -14,6 +14,8 @@ import re
 import threading
 import time
 
+from .telemetry import CompletionError, CompletionMetrics, CompletionResult
+
 
 class Provider:
     """One blocking call: (system, user) -> raw model text."""
@@ -22,6 +24,18 @@ class Provider:
 
     def complete(self, system: str, user: str) -> str:
         raise NotImplementedError
+
+    def complete_measured(self, system: str, user: str) -> CompletionResult:
+        started = time.time()
+        text = self.complete(system, user)
+        finished = time.time()
+        return CompletionResult(text, "", CompletionMetrics(
+            requested_model=self.name,
+            actual_model=self.name,
+            started_at=started,
+            first_token_at=None,
+            finished_at=finished,
+        ))
 
     def complete_batch(self, prompts: list[tuple[str, str]]
                        ) -> tuple[list[str], dict]:
@@ -37,7 +51,8 @@ class OllamaProvider(Provider):
     def __init__(self, model: str = "qwen2.5:7b",
                  host: str = "http://localhost:11434",
                  temperature: float = 0.7, timeout: float = 180.0,
-                 json_format: bool = True):
+                 json_format: bool = True, thinking: bool | None = None,
+                 max_tokens: int = 2048):
         import requests  # lazy
         self._requests = requests
         self.model = model
@@ -45,22 +60,78 @@ class OllamaProvider(Provider):
         self.temperature = temperature
         self.timeout = timeout
         self.json_format = json_format
+        self.thinking = thinking
+        self.max_tokens = max_tokens
         self.name = f"ollama:{model}"
 
     def complete(self, system: str, user: str) -> str:
+        return self.complete_measured(system, user).text
+
+    def complete_measured(self, system: str, user: str) -> CompletionResult:
+        started = time.time()
         body = {
             "model": self.model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
-            "stream": False,
-            "options": {"temperature": self.temperature},
+            "stream": True,
+            "options": {"temperature": self.temperature,
+                        "num_predict": self.max_tokens},
         }
+        if self.thinking is not None:
+            body["think"] = self.thinking
         if self.json_format:
             body["format"] = "json"   # constrains decoding to valid JSON
-        r = self._requests.post(f"{self.host}/api/chat", json=body,
-                                timeout=self.timeout)
-        r.raise_for_status()
-        return r.json()["message"]["content"]
+        try:
+            r = self._requests.post(f"{self.host}/api/chat", json=body,
+                                    timeout=self.timeout, stream=True)
+            r.raise_for_status()
+            content, reasoning = [], []
+            first_token_at = None
+            content_deltas = reasoning_deltas = 0
+            final = {}
+            for raw_line in r.iter_lines():
+                if not raw_line:
+                    continue
+                chunk = json.loads(raw_line.decode("utf-8"))
+                message = chunk.get("message") or {}
+                thought = message.get("thinking") or ""
+                text = message.get("content") or ""
+                if thought or text:
+                    first_token_at = first_token_at or time.time()
+                if thought:
+                    reasoning.append(thought)
+                    reasoning_deltas += 1
+                if text:
+                    content.append(text)
+                    content_deltas += 1
+                if chunk.get("done"):
+                    final = chunk
+            finished = time.time()
+            completion_tokens = int(final.get("eval_count", 0) or 0)
+            delta_count = reasoning_deltas + content_deltas
+            reasoning_tokens = (round(completion_tokens * reasoning_deltas / delta_count)
+                                if delta_count else 0)
+            metrics = CompletionMetrics(
+                requested_model=self.model,
+                actual_model=final.get("model") or self.model,
+                started_at=started,
+                first_token_at=first_token_at,
+                finished_at=finished,
+                prompt_tokens=int(final.get("prompt_eval_count", 0) or 0),
+                completion_tokens=completion_tokens,
+                reasoning_tokens=reasoning_tokens,
+                token_split_method="stream_delta_ratio",
+            )
+            return CompletionResult("".join(content), "".join(reasoning), metrics)
+        except CompletionError:
+            raise
+        except Exception as e:
+            finished = time.time()
+            metrics = CompletionMetrics(
+                requested_model=self.model, actual_model=self.model,
+                started_at=started, first_token_at=None, finished_at=finished,
+                token_split_method="stream_delta_ratio")
+            raise CompletionError(f"ollama [{self.model}]: {e}", metrics) from e
 
 
 class AnthropicProvider(Provider):
@@ -112,6 +183,8 @@ class OpenRouterProvider(Provider):
                  temperature: float = 0.7, timeout: float = 180.0,
                  max_tokens: int = 2048, cooldown_s: float = 65.0,
                  credit_cooldown_s: float = 3600.0,
+                 reasoning_effort: str | None = None,
+                 thinking: bool | None = None,
                  cost_path: str | None = None):
         import requests  # lazy
         self._requests = requests
@@ -126,13 +199,16 @@ class OpenRouterProvider(Provider):
         self.temperature = temperature
         self.timeout = timeout
         self.max_tokens = max_tokens
+        self.reasoning_effort = reasoning_effort
+        self.thinking = thinking
         self.cooldown_s = cooldown_s
         self.credit_cooldown_s = credit_cooldown_s
         self.cost_path = cost_path
         self.name = f"openrouter:{models[0]}"
         self._lock = threading.Lock()
         self._cooldown_until: dict[str, float] = {}   # model -> time.time()
-        self.totals = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+        self.totals = {"calls": 0, "prompt_tokens": 0, "cached_tokens": 0,
+                       "completion_tokens": 0, "reasoning_tokens": 0,
                        "cost_usd": 0.0, "rate_limited": 0}
 
     # ---- fallback chain ----------------------------------------------------
@@ -165,15 +241,23 @@ class OpenRouterProvider(Provider):
 
     # ---- accounting ----------------------------------------------------------
     def _record_usage(self, model: str, usage: dict):
+        cached = ((usage.get("prompt_tokens_details") or {})
+                  .get("cached_tokens", 0) or 0)
+        reasoning = ((usage.get("completion_tokens_details") or {})
+                     .get("reasoning_tokens", 0) or 0)
         with self._lock:
             self.totals["calls"] += 1
             self.totals["prompt_tokens"] += usage.get("prompt_tokens", 0) or 0
+            self.totals["cached_tokens"] += cached
             self.totals["completion_tokens"] += usage.get("completion_tokens", 0) or 0
+            self.totals["reasoning_tokens"] += reasoning
             self.totals["cost_usd"] += usage.get("cost", 0.0) or 0.0
             if self.cost_path:
                 rec = {"time": time.time(), "model": model,
                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                       "cached_tokens": cached,
                        "completion_tokens": usage.get("completion_tokens", 0),
+                       "reasoning_tokens": reasoning,
                        "cost_usd": usage.get("cost", 0.0),
                        "total_cost_usd": round(self.totals["cost_usd"], 6),
                        "total_calls": self.totals["calls"]}
@@ -183,6 +267,9 @@ class OpenRouterProvider(Provider):
 
     # ---- the call ------------------------------------------------------------
     def complete(self, system: str, user: str) -> str:
+        return self.complete_measured(system, user).text
+
+    def complete_measured(self, system: str, user: str) -> CompletionResult:
         deadline = time.time() + self.timeout
         while True:
             with self._lock:
@@ -198,29 +285,89 @@ class OpenRouterProvider(Provider):
                         f"({', '.join(self.models)})")
                 time.sleep(max(0.5, wait_until - time.time()))
                 continue
-            resp = self._requests.post(
-                self.API_URL,
-                headers={"Authorization": f"Bearer {self.api_key}",
-                         "X-Title": "terra-incognita"},
-                json={"model": model,
-                      "messages": [{"role": "system", "content": system},
-                                   {"role": "user", "content": user}],
-                      "temperature": self.temperature,
-                      "max_tokens": self.max_tokens,
-                      "usage": {"include": True}},
-                timeout=self.timeout)
+            body = {"model": model,
+                    "messages": [{"role": "system", "content": system},
+                                 {"role": "user", "content": user}],
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                    "stream": True,
+                    "usage": {"include": True}}
+            if self.thinking is not None:
+                body["reasoning"] = {"enabled": self.thinking}
+            elif self.reasoning_effort:
+                body["reasoning"] = {"effort": self.reasoning_effort}
+            started = time.time()
+            try:
+                resp = self._requests.post(
+                    self.API_URL,
+                    headers={"Authorization": f"Bearer {self.api_key}",
+                             "X-Title": "terra-incognita"},
+                    json=body, timeout=self.timeout, stream=True)
+            except Exception as e:
+                finished = time.time()
+                raise CompletionError(
+                    f"openrouter [{model}]: {e}",
+                    CompletionMetrics(model, model, started, None, finished)) from e
             if resp.status_code == 429:
                 self._start_cooldown(model, resp, self.cooldown_s)
                 continue
             if resp.status_code == 402:   # free credits exhausted for the day
                 self._start_cooldown(model, resp, self.credit_cooldown_s)
                 continue
-            resp.raise_for_status()
-            data = resp.json()
-            if "error" in data:   # OpenRouter reports provider errors in-body
-                raise RuntimeError(f"openrouter [{model}]: {data['error']}")
-            self._record_usage(model, data.get("usage") or {})
-            return data["choices"][0]["message"]["content"]
+            try:
+                resp.raise_for_status()
+                content, reasoning = [], []
+                usage, actual_model = {}, model
+                first_token_at = None
+                for raw_line in resp.iter_lines():
+                    if not raw_line:
+                        continue
+                    line = raw_line.decode("utf-8")
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    data = json.loads(payload)
+                    if "error" in data:
+                        raise RuntimeError(data["error"])
+                    actual_model = data.get("model") or actual_model
+                    usage = data.get("usage") or usage
+                    for choice in data.get("choices") or []:
+                        delta = choice.get("delta") or {}
+                        thought = delta.get("reasoning") or ""
+                        text = delta.get("content") or ""
+                        if thought or text:
+                            first_token_at = first_token_at or time.time()
+                        if thought:
+                            reasoning.append(thought)
+                        if text:
+                            content.append(text)
+                finished = time.time()
+                cached = ((usage.get("prompt_tokens_details") or {})
+                          .get("cached_tokens", 0) or 0)
+                reasoning_tokens = ((usage.get("completion_tokens_details") or {})
+                                    .get("reasoning_tokens", 0) or 0)
+                metrics = CompletionMetrics(
+                    requested_model=model,
+                    actual_model=actual_model,
+                    started_at=started,
+                    first_token_at=first_token_at,
+                    finished_at=finished,
+                    prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                    cached_tokens=int(cached),
+                    completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+                    reasoning_tokens=int(reasoning_tokens),
+                    cost_usd=float(usage.get("cost", 0.0) or 0.0),
+                )
+                self._record_usage(actual_model, usage)
+                return CompletionResult("".join(content), "".join(reasoning), metrics)
+            except CompletionError:
+                raise
+            except Exception as e:
+                finished = time.time()
+                metrics = CompletionMetrics(model, model, started, None, finished)
+                raise CompletionError(f"openrouter [{model}]: {e}", metrics) from e
 
 
 class DiffusionGemmaProvider(Provider):
