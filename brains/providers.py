@@ -242,6 +242,7 @@ class DiffusionGemmaProvider(Provider):
                  device_map: str = "auto", thinking: bool = True,
                  think_token: str = "<|think|>",
                  answer_delimiter: str | None = "<channel|>",
+                 quantization: str | None = None,
                  chat_template_kwargs: dict | None = None,
                  gen_kwargs: dict | None = None,
                  model=None, processor=None):
@@ -249,6 +250,14 @@ class DiffusionGemmaProvider(Provider):
         self.max_new_tokens = max_new_tokens
         self.dtype = dtype
         self.device_map = device_map
+        # quantization: None (full bf16, needs ~80 GB), "4bit" (~13 GB, NF4) or
+        # "8bit" (~26 GB, int8) via bitsandbytes — both Ampere-compatible, so a
+        # 40 GB A100 can run the 26B model. FP8/NVFP4 checkpoints need Hopper/
+        # Blackwell and are NOT handled here.
+        if quantization not in (None, "4bit", "8bit"):
+            raise ValueError(f"quantization must be None, '4bit' or '8bit', "
+                             f"got {quantization!r}")
+        self.quantization = quantization
         # Thinking ON by default (model card: enable it by placing the <|think|>
         # token at the start of the system prompt). The model then emits its
         # reasoning in a thought channel followed by the final answer;
@@ -285,9 +294,22 @@ class DiffusionGemmaProvider(Provider):
             raise RuntimeError(
                 "DiffusionGemmaProvider requires a CUDA GPU; none is available. "
                 "Run inference inside Colab on a GPU runtime.")
+        load_kwargs = {"device_map": self.device_map}
+        if self.quantization:
+            from transformers import BitsAndBytesConfig  # lazy (needs bitsandbytes)
+            if self.quantization == "4bit":
+                load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16)
+            else:  # "8bit"
+                load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_8bit=True)
+        else:
+            load_kwargs["dtype"] = self.dtype     # full precision
         self.processor = AutoProcessor.from_pretrained(self.model_id)
         self.model = DiffusionGemmaForBlockDiffusion.from_pretrained(
-            self.model_id, dtype=self.dtype, device_map=self.device_map)
+            self.model_id, **load_kwargs)
         self.model.eval()
 
     def complete(self, system: str, user: str) -> str:

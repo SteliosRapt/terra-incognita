@@ -139,6 +139,16 @@ def test_thinking_strips_thought_channel_keeps_json(tmp_path):
     assert parse_response(out_texts[0]).plan == [{"action": "wait"}]
 
 
+def test_quantization_param_validates_and_is_lazy():
+    import pytest
+    p = make_provider({"backend": "diffusiongemma", "quantization": "4bit"})
+    assert p.quantization == "4bit"
+    assert p.model is None and p.processor is None      # still nothing loaded
+    assert DiffusionGemmaProvider().quantization is None  # default: full precision
+    with pytest.raises(ValueError):
+        DiffusionGemmaProvider(quantization="3bit")
+
+
 def test_analyze_cell_occupancy_and_energy_saved(tmp_path):
     from experiments.analyze_diffusiongemma import analyze_cell
     cfg = {"grid_size": 16, "seed": 1, "n_agents": 1, "agent_names": ["A00"],
