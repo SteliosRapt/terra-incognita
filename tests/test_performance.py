@@ -1,6 +1,7 @@
 import json
 import pathlib
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,7 +11,8 @@ sys.path.insert(0, str(ROOT))
 from brains.base import PlanResult
 from engine.defaults import BASE
 from engine.sim import Simulation
-from experiments.performance import percentile, summarize_run
+from experiments.performance import percentile, read_jsonl, summarize_run
+import ti
 
 
 class RetryingBrain:
@@ -90,3 +92,27 @@ def test_percentile_uses_nearest_rank():
     assert percentile([1, 2, 3, 4, 5], 0.5) == 3
     assert percentile([1, 2, 3, 4, 5], 0.95) == 5
     assert percentile([], 0.5) is None
+
+
+def test_ordinary_run_writes_request_tick_and_performance_files(tmp_path,
+                                                                monkeypatch):
+    monkeypatch.setattr(ti, "RUNS", tmp_path)
+    args = SimpleNamespace(
+        provider="mock", model=None, preset=None, host=None,
+        condition="blind", book="none", book_manager=None,
+        agents=2, ticks=3, seed=42, replan=15,
+        reasoning_effort="none", max_tokens=None, thinking="default",
+        warmup=False, freeform=False, combine_note="off",
+        survey="off", survey_every=10, name="ordinary",
+        render_every=0,
+    )
+
+    run_dir = ti.cmd_run(args)
+
+    assert run_dir == tmp_path / "ordinary"
+    assert (run_dir / "requests.jsonl").exists()
+    assert len(read_jsonl(run_dir / "ticks.jsonl")) == 3
+    performance = json.loads((run_dir / "performance.json").read_text())
+    assert performance["completed_ticks"] == 3
+    assert performance["complete"] is True
+    assert performance["groups"]["planner"]["request_count"] > 0

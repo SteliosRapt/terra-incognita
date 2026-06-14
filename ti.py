@@ -112,6 +112,27 @@ def print_cost_breakdown(run_dir: pathlib.Path):
           f"{total['completion_tokens']} output | ${total['cost_usd']:.6f}")
 
 
+def print_performance(performance: dict):
+    combined = performance.get("groups", {}).get("combined")
+    if not combined:
+        return
+    total = combined["total"]
+    print("\nperformance:")
+    print(f"  {performance['completed_ticks']} ticks in "
+          f"{performance['total_time_s']:.3f}s | "
+          f"avg tick {performance['tick_time_ms']['average']:.1f}ms | "
+          f"avg planning {performance['planning_time_ms']['average']:.1f}ms")
+    print(f"  {combined['request_count']} requests | "
+          f"avg TTFT {combined['ttft_ms']['average']}ms | "
+          f"avg generation {combined['generation_tps']['average']} tps")
+    print(f"  {total['prompt_tokens']} prompt ({total['cached_tokens']} cached) | "
+          f"{total['reasoning_tokens']} reasoning + "
+          f"{total['visible_response_tokens']} visible | "
+          f"${total['cost_usd']:.6f}")
+    print(f"  parse failures: {combined['first_attempt_parse_failure_pct']:.1f}% "
+          f"first attempt, {combined['final_parse_failure_pct']:.1f}% final")
+
+
 def latest_run() -> pathlib.Path:
     cands = [d for d in RUNS.iterdir()
              if d.is_dir() and (d / "config.json").exists()
@@ -377,6 +398,10 @@ def cmd_run(args):
     run_dir.mkdir(parents=True, exist_ok=True)
     telemetry = run_dir / "prompts.jsonl"
     telemetry.write_text("", encoding="utf-8")
+    requests_path = run_dir / "requests.jsonl"
+    ticks_path = run_dir / "ticks.jsonl"
+    requests_path.write_text("", encoding="utf-8")
+    ticks_path.write_text("", encoding="utf-8")
 
     spec = {"backend": args.provider}
     if args.model:
@@ -389,8 +414,12 @@ def cmd_run(args):
         spec["cost_path"] = str(run_dir / "costs.jsonl")
         if args.reasoning_effort != "none":
             spec["reasoning_effort"] = args.reasoning_effort
+    if args.provider in ("openrouter", "ollama"):
         if args.max_tokens:
             spec["max_tokens"] = args.max_tokens
+        thinking = getattr(args, "thinking", "default")
+        if thinking != "default":
+            spec["thinking"] = thinking == "on"
     if args.provider == "ollama" and args.freeform:
         spec["json_format"] = False   # freeform prose around the JSON object
 
@@ -398,12 +427,32 @@ def cmd_run(args):
     from brains.providers import make_provider
     shared = {}
 
+    if getattr(args, "warmup", False):
+        from brains.telemetry import CompletionError, RequestRecorder
+        warmup_spec = dict(spec)
+        if args.provider == "openrouter":
+            warmup_spec["cost_path"] = str(run_dir / "warmup_costs.jsonl")
+        warmup_provider = make_provider(warmup_spec, random.Random(args.seed))
+        recorder = RequestRecorder(run_dir / "warmup_requests.jsonl")
+        try:
+            warmup = warmup_provider.complete_measured(
+                "You are a model warm-up request.",
+                'Reply only with {"plan":[{"action":"wait"}]}.')
+            recorder.write(warmup, role="warmup", tick=-1, subject="warmup",
+                           attempt=1, provider_ok=True, parse_ok=True, error=None)
+        except CompletionError as e:
+            recorder.write(e, role="warmup", tick=-1, subject="warmup",
+                           attempt=1, provider_ok=False, parse_ok=False,
+                           error=f"{type(e).__name__}: {e}")
+            raise
+
     def factory(rng):
         if "provider" not in shared:
             shared["provider"] = make_provider(spec, rng)
         return LLMPlannerBrain(shared["provider"], telemetry_path=str(telemetry),
                                freeform=cfg["freeform_thoughts"],
-                               combine_note=cfg["combine_note"])
+                               combine_note=cfg["combine_note"],
+                               request_path=str(requests_path))
 
     sim = Simulation(cfg, factory, str(run_dir))
     # config on disk from tick 0: live `status`/`screenshot` need it
@@ -435,7 +484,8 @@ def cmd_run(args):
                 "cost_path": str(run_dir / "survey_costs.jsonl"),
             })
             judge = SurveyJudge(judge_provider,
-                                questions, truth, str(run_dir / "survey.jsonl"))
+                                questions, truth, str(run_dir / "survey.jsonl"),
+                                request_path=str(requests_path))
 
     print(f"run {run_dir.name}: {args.agents} agents x {args.ticks} ticks | "
           f"{args.provider}"
@@ -445,26 +495,36 @@ def cmd_run(args):
           + (" | freeform" if args.freeform else "")
           + (f" | reasoning={args.reasoning_effort}"
              if args.reasoning_effort != "none" else "")
+          + (f" | thinking={args.thinking}"
+             if getattr(args, "thinking", "default") != "default" else "")
           + (f" | survey every {args.survey_every}t" if judge else " | survey off"),
           flush=True)
 
+    from experiments.performance import summarize_run
     judge_calls = 0
-    for _ in range(args.ticks):
-        sim.step()
-        sim.logf.flush()             # live status/screenshot read this file
-        if args.render_every and sim.tick % args.render_every == 0:
-            print(sim.render_ascii())
-        if judge and sim.tick % args.survey_every == 0:
-            judge_calls += judge.grade(sim.tick, survey_subjects(sim))
-        if sim.tick % 50 == 0:
-            alive = sum(a.alive for a in sim.agents.values())
-            print(f"  t{sim.tick}: alive {alive}/{args.agents}", flush=True)
-        if not any(a.alive for a in sim.agents.values()):
-            print(f"  population extinct at t{sim.tick}")
-            break
-    sim.logf.close()
-    with open(run_dir / "config.json", "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
+    try:
+        for _ in range(args.ticks):
+            sim.step()
+            with open(ticks_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(sim.last_step_metrics) + "\n")
+            sim.logf.flush()             # live status/screenshot read this file
+            if args.render_every and sim.tick % args.render_every == 0:
+                print(sim.render_ascii())
+            if judge and sim.tick % args.survey_every == 0:
+                judge_calls += judge.grade(sim.tick, survey_subjects(sim))
+            if sim.tick % 50 == 0:
+                alive = sum(a.alive for a in sim.agents.values())
+                print(f"  t{sim.tick}: alive {alive}/{args.agents}", flush=True)
+            if not any(a.alive for a in sim.agents.values()):
+                print(f"  population extinct at t{sim.tick}")
+                break
+    finally:
+        sim.logf.close()
+        with open(run_dir / "config.json", "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+        performance = summarize_run(run_dir, expected_ticks=args.ticks)
+        with open(run_dir / "performance.json", "w", encoding="utf-8") as f:
+            json.dump(performance, f, indent=2)
 
     print("\n" + summarize(run_dir))
     if judge:
@@ -472,8 +532,9 @@ def cmd_run(args):
         answered = sorted((qid, min(t.values())) for qid, t in fc.items() if t)
         line = " ".join(f"{q}@t{t}" for q, t in answered) or "(none judged correct)"
         print(f"survey: {judge_calls} judge calls | first-correct: {line}")
-    print_cost_breakdown(run_dir)
+    print_performance(performance)
     print(f"\nrun dir: {run_dir.resolve()}")
+    return run_dir
 
 
 def cmd_list(args):
@@ -664,6 +725,10 @@ def main():
                    default="none", help="OpenRouter reasoning effort")
     r.add_argument("--max-tokens", type=int, default=None,
                    help="provider completion-token ceiling")
+    r.add_argument("--thinking", choices=["default", "on", "off"],
+                   default="default", help="explicit provider thinking mode")
+    r.add_argument("--warmup", action="store_true",
+                   help="perform one excluded provider warm-up request")
     r.add_argument("--freeform", action="store_true",
                    help="let models think in prose around the JSON (ablation)")
     r.add_argument("--combine-note", choices=["on", "off"], default="off",
