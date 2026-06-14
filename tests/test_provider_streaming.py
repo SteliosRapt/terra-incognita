@@ -9,6 +9,9 @@ sys.path.insert(0, str(ROOT))
 
 from brains.telemetry import CompletionMetrics, CompletionResult, RequestRecorder
 from brains.providers import OllamaProvider, OpenRouterProvider
+from brains.base import Observation
+from brains.llm_planner import LLMPlannerBrain
+from brains.survey import SurveyJudge
 
 
 class StreamingResponse:
@@ -49,6 +52,35 @@ def ollama_provider(chunks, thinking):
     lines = [json.dumps(chunk) for chunk in chunks]
     provider._requests = StreamingRequests(StreamingResponse(lines))
     return provider
+
+
+class MeasuredCannedProvider:
+    name = "measured-canned"
+    parallel_safe = False
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+
+    def complete_measured(self, system, user):
+        text = self.replies.pop(0)
+        return CompletionResult(text, "", CompletionMetrics(
+            requested_model=self.name,
+            actual_model=self.name,
+            started_at=10.0,
+            first_token_at=10.1,
+            finished_at=10.5,
+            prompt_tokens=20,
+            completion_tokens=10,
+        ))
+
+
+def observation():
+    return Observation(
+        tick=4,
+        me={"id": "A02", "pos": (1, 2), "energy": 80,
+            "inventory": {}, "tools": set(), "standing_on": "grass",
+            "slots_used": 0, "slot_capacity": 8},
+        nearby_resources={}, nearby_agents=[], journal_tail=[])
 
 
 def test_completion_metrics_derive_visible_tokens_and_tps():
@@ -169,3 +201,41 @@ def test_ollama_nonthinking_sends_explicit_disable():
 
     assert provider.complete("system", "user") == "ok"
     assert provider._requests.bodies[0]["think"] is False
+
+
+def test_planner_records_each_attempt_and_parse_outcome(tmp_path):
+    provider = MeasuredCannedProvider([
+        "not json",
+        '{"reasoning":"ok","plan":[{"action":"wait"}]}',
+    ])
+    path = tmp_path / "requests.jsonl"
+    brain = LLMPlannerBrain(provider, request_path=str(path))
+
+    result = brain.plan(observation())
+
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert result.planning_attempts == 2
+    assert [row["attempt"] for row in rows] == [1, 2]
+    assert [row["parse_ok"] for row in rows] == [False, True]
+    assert all(row["role"] == "planner" for row in rows)
+    assert all(row["subject"] == "A02" for row in rows)
+
+
+def test_survey_records_role_subject_and_parse_result(tmp_path):
+    provider = MeasuredCannedProvider(['{"q1":true}'])
+    path = tmp_path / "requests.jsonl"
+    judge = SurveyJudge(
+        provider,
+        [{"id": "q1", "text": "Question?"}],
+        {"q1": "truth"},
+        str(tmp_path / "survey.jsonl"),
+        request_path=str(path),
+    )
+
+    assert judge.grade(10, {"A00": "a changed belief"}) == 1
+
+    row = json.loads(path.read_text())
+    assert row["role"] == "survey"
+    assert row["subject"] == "A00"
+    assert row["tick"] == 10
+    assert row["parse_ok"] is True

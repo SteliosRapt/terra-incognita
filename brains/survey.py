@@ -18,6 +18,8 @@ import time
 
 from .providers import Provider
 from .llm_planner import _extract_json
+from .telemetry import (CompletionError, CompletionMetrics, CompletionResult,
+                        RequestRecorder)
 
 JUDGE_SYSTEM = (
     "You are a strict examiner in a research experiment. Subjects live in a "
@@ -38,12 +40,13 @@ _file_lock = threading.Lock()
 class SurveyJudge:
     def __init__(self, provider: Provider, questions: list[dict],
                  ground_truth: dict[str, str], out_path: str,
-                 max_workers: int = 4):
+                 max_workers: int = 4, request_path: str | None = None):
         self.provider = provider
         self.questions = [q for q in questions if q["id"] in ground_truth]
         self.truth = ground_truth
         self.out_path = out_path
         self.max_workers = max_workers
+        self.request_recorder = RequestRecorder(request_path) if request_path else None
         self._last_graded: dict[str, str] = {}   # subject -> last text graded ok
 
     # ---- prompt ------------------------------------------------------------
@@ -58,9 +61,24 @@ class SurveyJudge:
     def _grade_one(self, tick: int, subject: str, text: str) -> dict:
         rec = {"tick": tick, "subject": subject, "model": self.provider.name,
                "ok": False, "error": None, "results": None}
+        completion = None
+        provider_ok = False
+        started_at = time.time()
         t0 = time.monotonic()
         try:
-            raw = self.provider.complete(JUDGE_SYSTEM, self._user_prompt(text))
+            prompt = self._user_prompt(text)
+            if hasattr(self.provider, "complete_measured"):
+                completion = self.provider.complete_measured(JUDGE_SYSTEM, prompt)
+            else:
+                raw = self.provider.complete(JUDGE_SYSTEM, prompt)
+                completion = CompletionResult(raw, "", CompletionMetrics(
+                    requested_model=self.provider.name,
+                    actual_model=self.provider.name,
+                    started_at=started_at,
+                    first_token_at=None,
+                    finished_at=time.time()))
+            provider_ok = True
+            raw = completion.text
             data = _extract_json(raw)
             if not isinstance(data, dict):
                 raise ValueError("judge reply is not a JSON object")
@@ -68,9 +86,24 @@ class SurveyJudge:
                               for q in self.questions}
             rec["ok"] = True
             self._last_graded[subject] = text
+        except CompletionError as e:
+            completion = e
+            rec["error"] = f"{type(e).__name__}: {e}"[:300]
         except Exception as e:   # judged again next wave; failure is recorded
             rec["error"] = f"{type(e).__name__}: {e}"[:300]
+            if completion is None:
+                completion = CompletionError(str(e), CompletionMetrics(
+                    requested_model=self.provider.name,
+                    actual_model=self.provider.name,
+                    started_at=started_at,
+                    first_token_at=None,
+                    finished_at=time.time()))
         rec["ms"] = int((time.monotonic() - t0) * 1000)
+        if self.request_recorder:
+            self.request_recorder.write(
+                completion, role="survey", tick=tick, subject=subject,
+                attempt=1, provider_ok=provider_ok, parse_ok=rec["ok"],
+                error=rec["error"])
         return rec
 
     # ---- one wave ------------------------------------------------------------

@@ -14,6 +14,8 @@ import time
 
 from .base import Observation, PlanResult
 from .providers import Provider
+from .telemetry import (CompletionError, CompletionMetrics, CompletionResult,
+                        RequestRecorder)
 
 # Survival basics are COMMON knowledge (spec §1: "Eating berries: +25 energy");
 # only the tech tree is hidden. Withholding them produced agents that starved
@@ -304,12 +306,13 @@ class LLMPlannerBrain:
 
     def __init__(self, provider: Provider, telemetry_path: str | None = None,
                  persona: str | None = None, freeform: bool = False,
-                 combine_note: bool = False):
+                 combine_note: bool = False, request_path: str | None = None):
         self.provider = provider
         self.telemetry_path = telemetry_path
         self.persona = persona
         self.freeform = freeform   # allow prose around the JSON (ablation knob)
         self.combine_note = combine_note   # --combine-note experiment knob
+        self.request_recorder = RequestRecorder(request_path) if request_path else None
         # sim.py fans planning out to threads only when every brain opts in
         self.parallel_safe = getattr(provider, "parallel_safe", False)
 
@@ -322,20 +325,51 @@ class LLMPlannerBrain:
                 user + "\n\nYour previous reply could not be used "
                 f"({last_err}). Reply again with ONLY the JSON object, "
                 "exactly in the format requested.")
-            raw, err, result = None, None, None
+            raw, err, result, completion = None, None, None, None
+            provider_ok = False
+            started_at = time.time()
             t0 = time.monotonic()
             try:
-                raw = self.provider.complete(system, prompt)
+                if hasattr(self.provider, "complete_measured"):
+                    completion = self.provider.complete_measured(system, prompt)
+                else:
+                    raw = self.provider.complete(system, prompt)
+                    finished_at = time.time()
+                    completion = CompletionResult(raw, "", CompletionMetrics(
+                        requested_model=self.provider.name,
+                        actual_model=self.provider.name,
+                        started_at=started_at,
+                        first_token_at=None,
+                        finished_at=finished_at))
+                provider_ok = True
+                raw = completion.text
                 result = parse_response(raw)
+            except CompletionError as e:
+                completion = e
+                err = f"{type(e).__name__}: {e}"
             except Exception as e:  # provider/network errors count as failures too
                 err = f"{type(e).__name__}: {e}"
+                if completion is None:
+                    completion = CompletionError(str(e), CompletionMetrics(
+                        requested_model=self.provider.name,
+                        actual_model=self.provider.name,
+                        started_at=started_at,
+                        first_token_at=None,
+                        finished_at=time.time()))
             ms = int((time.monotonic() - t0) * 1000)
             self._log(obs, attempt, system, prompt, raw, ms, err)
+            if self.request_recorder:
+                self.request_recorder.write(
+                    completion, role="planner", tick=obs.tick,
+                    subject=obs.me["id"], attempt=attempt,
+                    provider_ok=provider_ok, parse_ok=result is not None,
+                    error=err)
             if result is not None:
+                result.planning_attempts = attempt
                 return result
             last_err = err[:200]
         return PlanResult([{"action": "wait"}], "(planner output unusable)",
-                          parse_error=True)
+                          parse_error=True, planning_attempts=2)
 
     def _log(self, obs: Observation, attempt: int, system: str, user: str,
              raw: str | None, ms: int, err: str | None):
@@ -368,7 +402,8 @@ class BatchLLMPlannerBrain:
 
     def __init__(self, provider, telemetry_path: str | None = None,
                  metrics_path: str | None = None, persona: str | None = None,
-                 freeform: bool = False, combine_note: bool = False):
+                 freeform: bool = False, combine_note: bool = False,
+                 request_path: str | None = None):
         if not hasattr(provider, "complete_batch"):
             raise TypeError(f"{type(provider).__name__} has no complete_batch; "
                             "BatchLLMPlannerBrain needs a batching provider")
@@ -378,6 +413,7 @@ class BatchLLMPlannerBrain:
         self.persona = persona
         self.freeform = freeform
         self.combine_note = combine_note
+        self.request_recorder = RequestRecorder(request_path) if request_path else None
 
     def plan(self, obs: Observation) -> PlanResult:
         """Single-agent path (e.g. a reflex-only tick): just a batch of one."""

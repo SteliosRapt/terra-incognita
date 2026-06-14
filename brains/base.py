@@ -31,3 +31,4 @@ class PlanResult:
     updated_beliefs: list | None = None     # None = leave unchanged
     updated_notes: str | None = None        # None = leave unchanged
     parse_error: bool = False               # LLM output unusable; plan is the fallback
+    planning_attempts: int = 1              # provider requests used for this plan
