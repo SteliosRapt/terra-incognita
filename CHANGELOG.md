@@ -64,6 +64,21 @@ process, in priority order:
 One seed per cell, so this first pass is exploratory, not conclusive. Not yet
 wired as a config/runner — this entry records the model decision only.
 
+**DiffusionGemma aborted (Colab parked).** The v0.40 DiffusionGemma 2×2 was
+dropped as the first pass: too slow to run locally, and the first Colab attempts
+did not fit the available GPU/RAM. The Colab implementation may still be worth
+finishing for a later, heavier pass — the design and code are kept intact
+(`DIFFUSIONGEMMA_EXPERIMENT_PLAN.md` now carries a status banner). The local
+DiffusionGemma install was never used.
+
+**Default model + viewer.** `configs/openrouter.json` default chain is now the
+single paid `google/gemma-4-26b-a4b-it` (was the free gemma-4 chain, which now
+lives under the `gemma` preset). The viewer gains two presets,
+`gemma26` (no thinking, the new default selection) and `gemma26-thinking`, and
+threads an explicit `thinking` flag into the OpenRouter/Ollama provider spec.
+The legacy `openrouter-90-10` preset's "free" half is now pinned to the `gemma`
+preset so the default-chain change doesn't silently make those agents paid.
+
 ## v0.40 — DiffusionGemma 2×2 shelter experiment (2026-06-14)
 Branch `diffusiongemma-shelter`, off `v0.39-prompt-fixes` (verified to be a
 superset of `main`: it already carries the v0.38 Book/epistemics work the Book

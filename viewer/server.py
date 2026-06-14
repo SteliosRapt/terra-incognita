@@ -94,6 +94,8 @@ def spend_totals(providers: list) -> dict | None:
 
 # model presets (the configurator's quick options; "custom" uses provider/model)
 PRESETS = {
+    "gemma26": "openrouter gemma-4-26b-a4b-it (paid), no thinking — default",
+    "gemma26-thinking": "openrouter gemma-4-26b-a4b-it (paid), thinking on",
     "local-e2b": "ollama gemma4:e2b, all agents",
     "openrouter-90-10": "90% gemma-4 free / 10% (floor) qwen3.6-35b-a3b paid",
     "mock": "deterministic mock brain",
@@ -281,12 +283,16 @@ class RunManager:
             ticks = int(params.get("ticks", 300))
             seed = int(params.get("seed", 42))
             model = params.get("model") or None
+            thinking = None       # None = provider default; bool = explicit on/off
             if preset == "local-e2b":
                 provider, model = "ollama", "gemma4:e2b"
             elif preset == "mock":
                 provider, model = "mock", None
             elif preset == "openrouter-90-10":
                 provider, model = "openrouter", None
+            elif preset in ("gemma26", "gemma26-thinking"):
+                provider, model = "openrouter", "google/gemma-4-26b-a4b-it"
+                thinking = preset == "gemma26-thinking"
             else:
                 provider = params.get("provider", "mock")
                 if provider not in ("mock", "ollama", "anthropic", "openrouter"):
@@ -339,7 +345,10 @@ class RunManager:
                 # rest on free gemma-4. Providers are built NOW so a missing
                 # OPENROUTER_API_KEY fails the start request, not tick 1.
                 cost_path = str(run_dir / "costs.jsonl")
-                free = make_provider({"backend": "openrouter",
+                # pin the free half to the explicit free gemma chain — the
+                # default chain is now the paid 26B (v0.41), so relying on it
+                # here would silently make the "free" agents paid.
+                free = make_provider({"backend": "openrouter", "preset": "gemma",
                                       "cost_path": cost_path})
                 paid = make_provider({"backend": "openrouter", "tier": "paid",
                                       "cost_path": cost_path})
@@ -358,12 +367,16 @@ class RunManager:
                     spec["model"] = model
                 if provider == "openrouter":
                     spec["cost_path"] = str(run_dir / "costs.jsonl")
+                if thinking is not None and provider in ("openrouter", "ollama"):
+                    spec["thinking"] = thinking
 
                 def factory(rng):
                     if not self.providers:
                         self.providers = [make_provider(spec, rng)]
                     return brain(self.providers[0])
                 model_label = model or ("—" if provider == "mock" else "default")
+                if thinking is not None:
+                    model_label += f" ({'thinking' if thinking else 'no thinking'})"
 
             sim = Simulation(cfg, factory, str(run_dir))
             sim.logf = EventTee(sim.logf, self)

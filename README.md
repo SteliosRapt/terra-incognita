@@ -82,4 +82,10 @@ gemma4` matrix (full numbers in CHANGELOG v0.41); the decision process:
 - **No GPU.** An API-hosted model lets the first pass run from the CLI; the Colab
   DiffusionGemma path (GPU, batched) is reserved for a later, heavier pass.
 
+This model is now the project default: the OpenRouter default chain in
+`configs/openrouter.json` is the single paid `google/gemma-4-26b-a4b-it`, and the
+viewer's model selector defaults to the **gemma26** preset (no thinking), with a
+**gemma26-thinking** variant alongside it. The old free gemma-4 chain still lives
+under the `gemma` preset (`py ti.py run --preset gemma`).
+
 This first pass is one seed per cell — exploratory, not statistically conclusive.

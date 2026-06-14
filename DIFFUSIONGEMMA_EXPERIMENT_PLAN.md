@@ -1,5 +1,15 @@
 # DiffusionGemma Shelter Experiment Plan
 
+> **Status (2026-06-14): aborted, Colab path parked.** DiffusionGemma was too
+> slow to run locally, and the first attempts at the Colab implementation did not
+> fit in the available Colab GPU/RAM. The experiment was therefore dropped as the
+> first experimental pass — that pass now runs on the benchmarked
+> `google/gemma-4-26b-a4b-it` (paid OpenRouter, no thinking) instead (see
+> README "First-pass experiment planner" and CHANGELOG v0.41). The Colab
+> implementation may still be worth finishing for a later, heavier pass: the
+> design and code below are kept intact for that. The local DiffusionGemma install
+> was never used and remains untouched.
+
 ## Directory Changes
 
 - Save this plan as `DIFFUSIONGEMMA_EXPERIMENT_PLAN.md` in the repository root during implementation.
