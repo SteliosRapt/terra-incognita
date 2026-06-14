@@ -5,7 +5,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from experiments.benchmark_gemma4 import (gemma4_matrix, should_run,
+from experiments.benchmark_gemma4 import (build_run_command, gemma4_matrix, should_run,
                                           write_reports)
 
 
@@ -36,6 +36,13 @@ def test_completed_entry_is_skipped(tmp_path):
     }), encoding="utf-8")
 
     assert should_run(entry, tmp_path) is False
+
+
+def test_matrix_run_command_uses_shared_8192_token_ceiling():
+    command = build_run_command(gemma4_matrix()[0])
+
+    index = command.index("--max-tokens")
+    assert command[index + 1] == "8192"
 
 
 def completed_performance():

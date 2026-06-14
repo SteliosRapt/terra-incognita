@@ -58,6 +58,18 @@ def should_run(entry: BenchmarkEntry, runs_root: pathlib.Path = RUNS) -> bool:
                 and performance.get("completed_ticks") == 100)
 
 
+def build_run_command(entry: BenchmarkEntry) -> list[str]:
+    return [
+        sys.executable, str(ROOT / "ti.py"), "run",
+        "--provider", entry.provider, "--model", entry.model,
+        "--thinking", "on" if entry.thinking else "off",
+        "--agents", "5", "--ticks", "100", "--seed", "42",
+        "--condition", "blind", "--book", "none",
+        "--survey", "off", "--warmup", "--max-tokens", "8192",
+        "--name", entry.run_name,
+    ]
+
+
 REPORT_FIELDS = [
     "slug", "provider", "model", "thinking", "run_name", "complete",
     "completed_ticks", "total_time_s", "average_tick_ms", "p50_tick_ms",
@@ -179,14 +191,7 @@ def run_gemma4_benchmark(runs_root: pathlib.Path = RUNS,
                 statuses.append({"run_name": entry.run_name, "status": "skipped"})
                 continue
             started = time.time()
-            cmd = [
-                sys.executable, str(ROOT / "ti.py"), "run",
-                "--provider", entry.provider, "--model", entry.model,
-                "--thinking", "on" if entry.thinking else "off",
-                "--agents", "5", "--ticks", "100", "--seed", "42",
-                "--condition", "blind", "--book", "none",
-                "--survey", "off", "--warmup", "--name", entry.run_name,
-            ]
+            cmd = build_run_command(entry)
             completed = subprocess.run(cmd, cwd=ROOT, check=False)
             statuses.append({"run_name": entry.run_name,
                              "status": "completed" if completed.returncode == 0
