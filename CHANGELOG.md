@@ -44,6 +44,26 @@ fires periodically; the cost lives in the p95 planning ticks.
   stream even with thinking requested, so `reasoning_tokens` stays 0; dropped from
   the matrix per request.
 
+**Decision — first-pass experiment planner.** The benchmark existed to pick the
+planner for the first experimental pass: the **Note × Book 2×2** (note off/on ×
+book none/librarian — the DIFFUSIONGEMMA_EXPERIMENT_PLAN.md design, four cells).
+Chosen: **`google/gemma-4-26b-a4b-it`, paid route, thinking off.** Decision
+process, in priority order:
+1. **Parse reliability** is the binding constraint for an unattended four-cell
+   matrix — retries inflate time and muddy the discovery metrics. 26B gave 0%
+   first-attempt parse failures vs 31B's 37.3% (3.0% final). 26B wins decisively.
+2. **Throughput/cost** only confirmed it: 26B was ~2.2× faster (62.8 vs 43.9 tps;
+   371s vs 815s/100-tick run) at ~half the cost ($0.011 vs $0.022). No trade-off
+   against (1).
+3. **Paid over `:free`** — the free routes 429 on the warm-up once the daily
+   free-token budget is spent, so they can't anchor an unattended run.
+4. **Thinking off** — ~3× wall-time/cost for no parse benefit at this task.
+5. **API-hosted, no GPU** — keeps the first pass on the CLI; the Colab
+   DiffusionGemma path (GPU, batched, thinking on) is reserved for a later pass.
+
+One seed per cell, so this first pass is exploratory, not conclusive. Not yet
+wired as a config/runner — this entry records the model decision only.
+
 ## v0.40 — DiffusionGemma 2×2 shelter experiment (2026-06-14)
 Branch `diffusiongemma-shelter`, off `v0.39-prompt-fixes` (verified to be a
 superset of `main`: it already carries the v0.38 Book/epistemics work the Book

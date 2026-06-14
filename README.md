@@ -16,8 +16,9 @@ agents, who must discover them by experimentation.
 - viewer/ — live dashboard (`py viewer/server.py`): run configurator (incl. the
   combine-note knob), agents, events, stats, replay of past runs
 - ti.py — experiment CLI (`py ti.py run …`, list/status/summary/screenshot)
-- experiments/ — the DiffusionGemma 2×2 shelter study: matrix runner + analyzer
-  (see DIFFUSIONGEMMA_EXPERIMENT_PLAN.md)
+- experiments/ — the DiffusionGemma 2×2 shelter study (matrix runner + analyzer,
+  see DIFFUSIONGEMMA_EXPERIMENT_PLAN.md), the Gemma 4 planner benchmark
+  (benchmark_gemma4.py), and run-performance aggregation (performance.py)
 - notebooks/diffusiongemma_colab_2x2.ipynb — Colab GPU runner for that study
 - run_m1.py / run_m2.py / run_m3.py — milestone acceptance scripts
 - tests/ — pytest suite (`py -m pytest`), no LLM or network calls
@@ -56,3 +57,29 @@ Some providers do not expose hidden reasoning as a distinct token stream. In
 that case `reasoning_tokens` remains zero rather than estimating unavailable
 hidden tokens. In particular, the tested local `gemma4:e2b` Ollama endpoint
 returns no separate `message.thinking` stream even when thinking is requested.
+
+## First-pass experiment planner
+
+The first experimental pass — the Note × Book 2×2 (note off/on × book
+none/librarian, the design in DIFFUSIONGEMMA_EXPERIMENT_PLAN.md) — uses
+**`google/gemma-4-26b-a4b-it` on the paid OpenRouter route with thinking off** as
+the agent planner. That choice is the conclusion of the `py ti.py benchmark
+gemma4` matrix (full numbers in CHANGELOG v0.41); the decision process:
+
+- **JSON reliability first.** Over a 5-agent × 100-tick run the 26B route had 0%
+  first-attempt parse failures; the larger `gemma-4-31b-it` had 37.3% (3.0% after
+  retries). For an unattended four-cell matrix, parse reliability dominates — a
+  planner that needs constant retries is both slower and noisier to analyse.
+- **Faster and cheaper anyway.** 26B also ran ~2.2× faster (62.8 vs 43.9 gen
+  tps; 371s vs 815s for the 100-tick run) at ~half the cost ($0.011 vs $0.022),
+  so reliability cost nothing here.
+- **Paid, not `:free`.** The `:free` routes drop to per-request 429s once the
+  day's free-token budget is spent — the warm-up request fails first — so they
+  can't anchor an unattended run. The paid route is stable.
+- **Thinking off.** Thinking-on roughly triples wall-time and cost (growing
+  reasoning traces) with no parse benefit at this task, so the first pass omits
+  it. It stays available via `py ti.py run --thinking on`.
+- **No GPU.** An API-hosted model lets the first pass run from the CLI; the Colab
+  DiffusionGemma path (GPU, batched) is reserved for a later, heavier pass.
+
+This first pass is one seed per cell — exploratory, not statistically conclusive.
