@@ -1,0 +1,26 @@
+{
+  "experiment": "diffusiongemma_2x2",
+  "comment": "The Note x Book 2x2 shelter experiment. experiments/diffusiongemma_matrix.py reads this file and builds EXACTLY four run configs (one per cell). One seed per cell: results are exploratory, not statistically conclusive.",
+  "shared": {
+    "n_agents": 7,
+    "ticks": 1000,
+    "seed": 42,
+    "knowledge_condition": "blind",
+    "replan_interval": 15,
+    "survey": "off",
+    "agent_names": ["A00", "A01", "A02", "A03", "A04", "A05", "A06"]
+  },
+  "axes": {
+    "combine_note": ["off", "on"],
+    "book_condition": ["none", "librarian"]
+  },
+  "book_manager": "A00",
+  "provider": {
+    "backend": "diffusiongemma",
+    "model_id": "google/diffusiongemma-26B-A4B-it",
+    "max_new_tokens": 1024,
+    "dtype": "auto",
+    "device_map": "auto",
+    "thinking": true
+  }
+}

@@ -133,6 +133,15 @@ def _combine(a, ag, world, tick):
                          tools=set(ag.tools),
                          adjacent_structures=world.adjacent_structures(ag.pos))
     res = world.techtree.resolve(offered, ctx)
+    # one shelter per builder: reject the excess attempt BEFORE consuming
+    # anything — the bricks stay in the pack (spec: retained materials).
+    if (res.outcome == "success" and res.produced
+            and res.produced.get("type") == "structure"
+            and res.produced.get("item") == "shelter" and ag.shelter_built):
+        return True, [Event(tick, "combine_failed", actor=ag.id, position=ag.pos,
+                            payload={"ingredients": offered, "outcome": "shelter_limit",
+                                     "feedback": "You have already built your shelter; "
+                                                 "the bricks stay in your pack."})]
     for i, q in res.consumed.items():
         ag.remove(i, min(q, ag.inventory.get(i, 0)))
     if res.outcome != "success":
@@ -154,6 +163,8 @@ def _combine(a, ag, world, tick):
         else:
             exp = tick + p["lifetime_ticks"] if "lifetime_ticks" in p else -1
             world.structures[ag.pos] = Structure(p["item"], ag.id, tick, exp)
+            if p["item"] == "shelter":
+                ag.shelter_built = True
             evs.append(Event(tick, "structure_built", actor=ag.id, position=ag.pos,
                              payload={"structure": p["item"]}))
     if not placed:

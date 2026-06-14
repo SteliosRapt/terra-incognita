@@ -23,6 +23,9 @@ class AgentState:
     intention: str = ""                              # last plan's stated purpose
     last_plan_tick: int = -1                         # when the planner last ran
     replan_flag: bool = False                        # set when spoken to (directed say)
+    interrupted: bool = False                        # last plan died on a failed step
+    reflex_fired: bool = False                       # survival reflex replaced the plan
+    shelter_built: bool = False                      # built one shelter already (cap is 1)
     # measurement metadata (engine-written, never used for world logic):
     # recipe ids mentioned in speech this agent has heard — lets the engine tag
     # recipe_learned with source=taught vs discovered without reading the mind

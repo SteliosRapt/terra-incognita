@@ -322,6 +322,28 @@ const SPRITE_DEFS = {
       "................",
     ],
   },
+  shelter: {
+    // a small hut rendered in greens, so a shelter reads as a "greener square"
+    pal: { r: "#3f9c52", R: "#2f7a3e", w: "#6ad97e", W: "#4cb364", d: "#1f5028", o: "#10331a" },
+    px: [
+      "................",
+      ".......r........",
+      "......rRr.......",
+      ".....rRRRr......",
+      "....rRRRRRr.....",
+      "...rRRRRRRRr....",
+      "..rRRRRRRRRRr...",
+      ".oRRRRRRRRRRRo..",
+      "..owwwwwwwww o..",
+      "..owWWWoWWWwo...",
+      "..owWWWoWWWwo...",
+      "..owWWWoWWWwo...",
+      "..owWWWoWWWwo...",
+      "..oooooooooo o..",
+      "................",
+      "................",
+    ],
+  },
   skull: {
     pal: { b: "#ddd6c4", B: "#a39d8c", d: "#3a352a" },
     px: [

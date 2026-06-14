@@ -10,6 +10,14 @@ runs/
 # local-only files unrelated to the project
 scratch/
 
+# model caches / checkpoints / Colab artifacts (downloaded into HF cache or
+# Drive, never committed)
+hf_cache/
+*.safetensors
+*.gguf
+checkpoints/
+notebooks/*_outputs/
+
 # secrets — the key also lives in the user env (OPENROUTER_API_KEY)
 openrouterapi.txt
 

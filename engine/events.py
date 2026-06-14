@@ -20,6 +20,10 @@ class Event:
         return json.dumps(d, ensure_ascii=False)
 
 
+def _an(word: str) -> str:
+    return ("an " if word[:1].lower() in "aeiou" else "a ") + word
+
+
 def render_for_journal(ev: Event, viewer_id: str) -> str:
     """One-line English rendering of an event for an agent's journal."""
     you = ev.actor == viewer_id
@@ -40,7 +44,7 @@ def render_for_journal(ev: Event, viewer_id: str) -> str:
         if you:
             ing = ", ".join(f"{q} {i}" for i, q in p["ingredients"].items())
             return f"You combined {ing}. {p['feedback']}"
-        return f"{who} made something: a {p['produced']}."
+        return f"{who} made something: {_an(p['produced'])}."
     if t == "combine_failed":
         if you:
             return f"Your experiment failed. {p['feedback']}"
@@ -59,7 +63,7 @@ def render_for_journal(ev: Event, viewer_id: str) -> str:
         to = ev.target
         return f"{who} gave {p['qty']} {p['item']} to {to}."
     if t == "tool_equipped":
-        return f"{who} {'are' if you else 'is'} now carrying a {p['tool']}."
+        return f"{who} {'are' if you else 'is'} now carrying {_an(p['tool'])}."
     if t == "structure_built":
         return f"{who} built a {p['structure']} at {ev.position}."
     if t == "structure_expired":

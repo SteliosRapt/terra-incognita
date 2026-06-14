@@ -1,5 +1,104 @@
 # CHANGELOG / Design Notes
 
+## v0.40 — DiffusionGemma 2×2 shelter experiment (2026-06-14)
+Branch `diffusiongemma-shelter`, off `v0.39-prompt-fixes` (verified to be a
+superset of `main`: it already carries the v0.38 Book/epistemics work the Book
+conditions need). Verified the checkpoint exists:
+`google/diffusiongemma-26B-A4B-it` (Google, public, `diffusion_gemma` arch);
+inference API confirmed from the model card (`DiffusionGemmaForBlockDiffusion`
++ `AutoProcessor`, `generate(**inputs, max_new_tokens=...)`, thinking off).
+
+**Shelter mechanics.** Two new recipes in `configs/techtree_v0.json`: `brick`
+(`1 stone`, a *self-combine* — one item type, no partner) and `shelter`
+(`4 brick`, a **permanent** structure). Each agent may build at most one
+(`AgentState.shelter_built`); a second attempt is rejected *before* consuming
+anything (`combine_failed outcome="shelter_limit"`, bricks retained). Any agent
+benefits from any shelter: `engine/sim.py` charges 0 idle energy when an agent
+starts a tick on a shelter tile (1 otherwise); the per-step move surcharge is
+unchanged, so the four cases (on-shelter idle 0 / on-shelter move 1 / idle 1 /
+move 2) fall out exactly — hence each sheltered agent-tick saves exactly 1
+energy (the analyzer's energy estimate is therefore exact). Greener rendering
+in ASCII (`H`), PNG (`ti.py`), and the browser viewer (new sprite + legend).
+
+**The Note.** `brains/llm_planner.COMBINE_NOTE` = the exact string
+"An item can sometimes be combined by itself."; `ti.py --combine-note {on,off}`
+(default off) appends it to the system prompt (nothing equivalent when off). It
+hints at the *shape* of the brick self-combine without naming any recipe.
+
+**Batched inference.** `brains/providers.DiffusionGemmaProvider` — lazy,
+GPU-only (fails clearly without CUDA), `dtype/device_map="auto"`, with a real
+`complete_batch` (left-padded, one `generate` per batch) that also returns
+batch size / tokens / duration / TPS / device / peak GPU memory.
+`brains/llm_planner.BatchLLMPlannerBrain` is shared by every agent, and
+`engine/sim.py` plans the whole tick in one batched call when one shared
+batch-capable brain is in use (retries reprompt only the failures). Per-agent
+prompts.jsonl is unchanged (prompt-identical to a serial run); batch metrics go
+to `model_metrics.jsonl`.
+
+**Experiment.** `configs/experiments/diffusiongemma_2x2.json` +
+`experiments/diffusiongemma_matrix.py` build exactly four cells (Note off/on ×
+Book none/librarian; 7 agents, 1000 ticks, seed 42, blind, replan 15, surveys
+off; A00 the sole librarian writer), one model load for all four, completed
+cells skipped on rerun (`--provider mock` for a local smoke).
+`experiments/analyze_diffusiongemma.py` reports survival, combine attempts,
+brick discoveries, shelters built, occupancy + energy saved, fire-understanding
+evidence, and the Note/Book main effects + interaction — with the one-seed
+exploratory caveat. `notebooks/diffusiongemma_colab_2x2.ipynb` does the
+Colab-only run (clone at ref, optional Drive cache, GPU/disk report, download +
+load, batch-1-vs-7 benchmark, smoke, projections, gated full run, tables/plots,
+single ZIP). The local DiffusionGemma install is never touched.
+
+**Tests.** `tests/test_shelter.py` (recipes, one-per-builder cap + retained
+bricks, shared shelter, four energy cases, exact Note in/exclusion) and
+`tests/test_diffusiongemma.py` (batched plan = one call/tick with fakes, retry
+reprompts only failures, lazy provider, occupancy reconstruction, exactly four
+configs). `test_m3` knowledge assertion now derives the recipe set from the
+techtree. Full suite: 71 passing, no weights downloaded.
+
+## v0.39 — Playtest fixes: recipe leak, WHY NOW, earshot feedback, torus doc (2026-06-13)
+Claude played 15 planner calls by hand (2 agents × ~65 ticks, central book,
+seed 42) through `scratch/play.py` — a replay driver where the operator IS
+the brain: it reruns the sim from t0 against recorded replies and prints the
+exact prompt of the first unanswered call. Context held up; five fixes came
+out of it.
+
+**Recipe leak (measurement bug):** the format example in `_SCHEMA_DOC`
+showed `combine {"wood": 2, "stone": 1}` — which IS the axe. Models copy
+examples verbatim, so every prior LLM run got a free "discovery" (suspect
+in gemma's axe@t81/pickaxe@t39, 06-12 run). Example is now
+`{"berries": 1, "wood": 1}` and `test_schema_example_combine_is_not_a_real_recipe`
+resolves the example against the techtree under all tile/tool contexts so
+a future techtree edit can't silently re-introduce a leak.
+
+**WHY NOW (prompt section):** agents couldn't tell "plan finished" from
+"plan discarded mid-experiment". New line after STATUS states the trigger:
+first decision / plan finished / step failed / N-tick check-in with steps
+set aside / someone spoke to you / survival reflex took over. The reflex
+case was found live: A01's auto-eat at t58 silently ate a 2-step experiment.
+Two new trigger tokens in `planner_called` payloads: `step_failed`, `reflex`.
+
+**Earshot feedback:** a directed say to an out-of-range target journals
+"(X was too far away to hear you.)" for the speaker. Before, "You said to
+A00: …" read as success and produced false-confidence coordination
+(observed at t33 and t55 in the playtest). In-range behavior unchanged.
+
+**Torus + voice documented (system prompt):** "The world is a {W}x{H} grid
+whose edges wrap around…" and "your voice only carries a few tiles" join
+the survival basics — embodied common sense, same rationale as berries=food
+(agents at y=4 saw NEARBY wood at y=31 with no way to read it as close).
+Observation gains `world_size` and `replan_reason` fields (default-empty:
+old constructors unaffected).
+
+**Cosmetics:** world-placed structures render without ", built by world";
+"a axe" → "an axe" (`_an()` in events.py).
+
+**Verified:** 61 tests pass (11 new in `tests/test_prompt_fixes.py`); M1
+determinism PASS, M2 determinism PASS. M1 hash moves `f10d156c…` →
+`cd920f0d…` solely from the new `step_failed`/`reflex` trigger tokens in
+`planner_called` events (scripted M1 agents do hit failed steps); no rng
+touched, world events unchanged. `AGENT_EXPERIENCE.md` added: section-by-
+section anatomy of the prompt with the played timeline.
+
 ## v0.38 — Epistemics instruments: the Book, world-questions, survey judge, ti.py CLI (2026-06-12)
 From the handwritten notes ("The epistemics of artificial society"): can a
 society identify how the world works — time, regeneration, terrain coverage,

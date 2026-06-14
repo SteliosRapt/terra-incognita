@@ -279,8 +279,11 @@ def test_recipe_learned_source_taught_vs_discovered(tmp_path):
 
 # ---------------------------------------------------------------- conditions
 def test_knowledge_conditions(tmp_path):
-    rids = {"axe", "pickaxe", "basket", "fire", "farm", "cooked_food", "storehouse"}
+    # derive from the techtree so adding recipes (brick, shelter, ...) doesn't
+    # require touching this test
     sim = make_sim(tmp_path / "o", knowledge_condition="oracle")
+    rids = {r["id"] for r in sim.world.techtree.recipes}
+    assert {"axe", "fire", "shelter", "brick"} <= rids   # sanity: tree has them
     assert all(ag.knowledge == rids for ag in sim.agents.values())
 
     sim = make_sim(tmp_path / "f", knowledge_condition="fragmented")
