@@ -26,8 +26,11 @@ in ASCII (`H`), PNG (`ti.py`), and the browser viewer (new sprite + legend).
 hints at the *shape* of the brick self-combine without naming any recipe.
 
 **Batched inference.** `brains/providers.DiffusionGemmaProvider` — lazy,
-GPU-only (fails clearly without CUDA), `dtype/device_map="auto"`, with a real
-`complete_batch` (left-padded, one `generate` per batch) that also returns
+GPU-only (fails clearly without CUDA), `dtype/device_map="auto"`, **thinking ON**
+(model card: prepend `<|think|>` to the system prompt; the provider then drops
+the thought channel, splitting on `<channel|>`, so the JSON plan parses while
+the full reasoning stays in `prompts.jsonl`; `max_new_tokens=1024`). A real
+`complete_batch` (left-padded, one `generate` per batch) also returns
 batch size / tokens / duration / TPS / device / peak GPU memory.
 `brains/llm_planner.BatchLLMPlannerBrain` is shared by every agent, and
 `engine/sim.py` plans the whole tick in one batched call when one shared

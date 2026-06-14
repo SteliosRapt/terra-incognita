@@ -115,6 +115,14 @@ Each run produces the normal `config.json`, `events.jsonl`, `prompts.jsonl`, and
   (shared by every agent). `engine/sim.py` plans the whole tick in one batched
   call when one shared batch-capable brain is in use. Batch telemetry →
   `model_metrics.jsonl`; per-agent telemetry → `prompts.jsonl` (unchanged).
+- **Thinking is ON** (revised from the plan's "disable thinking" at the user's
+  request). The provider prepends `<|think|>` to the system prompt (model card),
+  the model reasons in a thought channel, and the provider keeps only the answer
+  after the `<channel|>` delimiter so the JSON plan parses; the full reasoning is
+  preserved in `prompts.jsonl`. `max_new_tokens=1024` for headroom. The Colab
+  notebook installs `-U transformers torch accelerate` (the card pins nothing)
+  and exposes the card's diffusion sampler settings (48 steps, temp 0.8→0.4,
+  entropy 0.1 / 0.005) as commented `GEN_KWARGS` to map onto `generate()`.
 - **Run/analyze:** `experiments/diffusiongemma_matrix.py` (builds exactly four
   cells, skips completed ones, `--provider mock` for local smoke) and
   `experiments/analyze_diffusiongemma.py`.
