@@ -72,12 +72,15 @@ def _gather(a, ag, world, tick):
     t = world.tile(ag.x, ag.y)
     evs = []
     got = 0
+    present = False        # is the resource actually on this tile to be taken?
     if res == "berries" and t.berries > 0:
+        present = True
         take = min(t.berries, 1)          # berries: 1 per action regardless of tools
         got = ag.add("berries", take)
         if got:
             t.berries -= got
     elif res == "wood" and t.type == FOREST and t.wood > 0:
+        present = True
         got = ag.add("wood", _tool_mult(ag, world, "wood"))   # axe: 3 per tree
         if got:
             t.wood = 0
@@ -85,6 +88,7 @@ def _gather(a, ag, world, tick):
             evs.append(Event(tick, "resource_depleted", position=ag.pos,
                              payload={"resource": "wood"}))
     elif res == "stone" and t.type == MOUNTAIN and t.stone > 0:
+        present = True
         take = min(t.stone, _tool_mult(ag, world, "stone"))
         got = ag.add("stone", take)
         if got:
@@ -96,8 +100,13 @@ def _gather(a, ag, world, tick):
         evs.insert(0, Event(tick, "gathered", actor=ag.id, position=ag.pos,
                             payload={"resource": res, "qty": got}))
         return True, evs
+    # two distinct failures, kept separate so the agent learns the right lesson:
+    # the resource was here but the pack is full, vs. there is none here at all.
+    reason = (f"your pack is full - no room for {res}" if present
+              else f"no {res} here")
     return True, [Event(tick, "plan_interrupted", actor=ag.id, position=ag.pos,
-                        payload={"reason": f"no {res} here or inventory full"})]
+                        payload={"reason": reason,
+                                 "cause": "pack_full" if present else "none_here"})]
 
 
 def _eat(a, ag, world, tick):
@@ -123,12 +132,21 @@ def _drop(a, ag, world, tick):
 
 def _combine(a, ag, world, tick):
     offered = {k: int(v) for k, v in (a.get("items") or {}).items() if int(v) > 0}
+    # every combine action is a crafting attempt — emit combine_failed (not a
+    # generic plan_interrupted) so these show up among the craft events too. The
+    # feedback makes clear nothing was actually tried, so the agent doesn't
+    # wrongly conclude the combination itself is impossible.
     if not offered:
-        return True, [Event(tick, "plan_interrupted", actor=ag.id,
-                            payload={"reason": "combine: no items offered"})]
+        return True, [Event(tick, "combine_failed", actor=ag.id, position=ag.pos,
+                            payload={"ingredients": {}, "outcome": "no_items",
+                                     "feedback": "You went to combine but offered "
+                                                 "no items, so nothing was tried."})]
     if not all(ag.inventory.get(i, 0) >= q for i, q in offered.items()):
-        return True, [Event(tick, "plan_interrupted", actor=ag.id,
-                            payload={"reason": "combine: you lack those materials"})]
+        return True, [Event(tick, "combine_failed", actor=ag.id, position=ag.pos,
+                            payload={"ingredients": offered,
+                                     "outcome": "insufficient_materials",
+                                     "feedback": "You do not actually have those "
+                                                 "materials, so nothing was tried."})]
     ctx = CombineContext(tile_type=world.tile(ag.x, ag.y).type,
                          tools=set(ag.tools),
                          adjacent_structures=world.adjacent_structures(ag.pos))

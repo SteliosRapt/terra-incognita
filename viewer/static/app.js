@@ -613,7 +613,7 @@ function renderPanels() {
   pill.textContent = st.toUpperCase();
   pill.className = "pill " + st;
   $("runName").textContent = state.run.name
-    ? `${state.run.name} — ${state.run.provider}${state.run.model && state.run.model !== "—" ? "/" + state.run.model : ""} · ${state.run.condition} · seed ${state.run.seed}`
+    ? `${state.run.name} — ${state.run.provider}${state.run.model && state.run.model !== "—" ? "/" + state.run.model : ""} · ${state.run.condition}${state.run.book && state.run.book !== "none" ? "/book:" + state.run.book : ""} · seed ${state.run.seed}${state.series ? ` · series ${state.series.index}/${state.series.total}` : ""}`
     : "no run loaded";
 
   const total = state.run.ticks || 0;
@@ -866,6 +866,7 @@ let WORLD_DEFAULTS = {}, DEFAULT_NAMES = [];
 fetch("/api/defaults").then((r) => r.json()).then((d) => {
   WORLD_DEFAULTS = d.world;
   DEFAULT_NAMES = d.default_names || [];
+  GEMMA_SERIES = d.series || null;
   $("worldForm").innerHTML = Object.entries(d.world).map(([k, v]) =>
     `<label class="half">${k.replaceAll("_", " ")}
        <input class="wparam" data-key="${k}" type="number"
@@ -918,22 +919,49 @@ $("fPreset").onchange = () => {
   $("rowProvider").classList.toggle("hidden", !custom);
   $("rowModel").classList.toggle("hidden", !custom);
 };
-$("btnCustom").onclick = () => {
+function currentRunParams() {
   const world = {};
   for (const inp of document.querySelectorAll("#worldForm .wparam")) {
     if (+inp.value !== WORLD_DEFAULTS[inp.dataset.key]) world[inp.dataset.key] = +inp.value;
   }
   const n = +$("fAgents").value;
-  post("/api/start", {
+  return {
     preset: $("fPreset").value,
     provider: $("fProvider").value, model: $("fModel").value || null,
     condition: $("fCondition").value, agents: n,
     combine_note: $("fCombineNote").checked,
+    book: $("fBook").value, book_manager: $("fBookMgr").value || null,
     ticks: +$("fTicks").value, seed: +$("fSeed").value,
     name: $("fName").value || null,
     agent_names: namesFor(n),
     world,
-  });
+  };
+}
+$("btnCustom").onclick = () => post("/api/start", currentRunParams());
+$("fBook").onchange = () =>
+  $("rowBookMgr").classList.toggle("hidden", $("fBook").value !== "librarian");
+
+/* ---- run series: a queue executed sequentially by the server ---- */
+let SERIES = [];
+let GEMMA_SERIES = null;     // built-in series, fetched from /api/defaults
+function seriesLabel(r, i) {
+  return `${i + 1}. ${esc(r.name || r.preset || "run")} · ${esc(r.condition || "blind")}`
+    + ` · book ${esc(r.book || "none")} · note ${r.combine_note ? "on" : "off"}`
+    + ` · ${r.agents || "?"}a × ${r.ticks || "?"}t`;
+}
+function renderSeries() {
+  if (!SERIES.length) { $("seriesList").textContent = "series empty"; return; }
+  setHTML($("seriesList"), SERIES.map((r, i) => `<div>${seriesLabel(r, i)}</div>`).join(""));
+}
+$("btnSeriesAdd").onclick = () => { SERIES.push(currentRunParams()); renderSeries(); };
+$("btnSeriesClear").onclick = () => { SERIES = []; renderSeries(); };
+$("btnSeriesGemma").onclick = () => {
+  SERIES = (GEMMA_SERIES && GEMMA_SERIES.runs ? GEMMA_SERIES.runs : []).map((r) => ({ ...r }));
+  renderSeries();
+};
+$("btnSeriesStart").onclick = () => {
+  if (!SERIES.length) { showError("series is empty — add runs or load a preset series"); return; }
+  post("/api/start_series", { runs: SERIES });
 };
 $("btnPause").onclick = () => post("/api/pause");
 $("btnResume").onclick = () => post("/api/resume");

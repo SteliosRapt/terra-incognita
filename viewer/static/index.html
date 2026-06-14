@@ -144,6 +144,8 @@
             <select id="fPreset">
               <option value="gemma26" selected>openrouter gemma-4-26b-a4b-it paid — no thinking (default)</option>
               <option value="gemma26-thinking">openrouter gemma-4-26b-a4b-it paid — thinking</option>
+              <option value="gemma31">openrouter gemma-4-31b-it paid — no thinking</option>
+              <option value="gemma31-thinking">openrouter gemma-4-31b-it paid — thinking</option>
               <option value="local-e2b">local gemma4:e2b (ollama)</option>
               <option value="openrouter-90-10">openrouter: 90% gemma-4 free / 10% qwen3.6-35b-a3b</option>
               <option value="mock">mock (no LLM)</option>
@@ -165,6 +167,16 @@
             </select></label>
           <label title="adds the exact hint 'An item can sometimes be combined by itself.' to the system prompt (the brick self-combine experiment knob)">
             combine note <input id="fCombineNote" type="checkbox"></label>
+          <label>book
+            <select id="fBook">
+              <option value="none" selected>none (control)</option>
+              <option value="central">central (shared, read/write on the marker)</option>
+              <option value="librarian">librarian (one writer, all read)</option>
+              <option value="personal">personal (private, anywhere)</option>
+              <option value="cloud">cloud (shared, anywhere)</option>
+            </select></label>
+          <label id="rowBookMgr" class="half hidden" title="librarian: which agent may write the book (defaults to the first agent)">
+            book manager <input id="fBookMgr" placeholder="(first agent)"></label>
           <label class="half">agents <input id="fAgents" type="number" value="10" min="1" max="12"></label>
           <label class="half">ticks <input id="fTicks" type="number" value="500" min="1"></label>
           <label class="half">seed <input id="fSeed" type="number" value="42"></label>
@@ -181,6 +193,14 @@
         <label class="speed">tick delay <span id="speedVal">0 ms</span>
           <input id="speed" type="range" min="0" max="1000" step="20" value="0">
         </label>
+        <h2>▸ Run series <span class="dim small">(queued, run sequentially)</span></h2>
+        <div class="presets">
+          <button id="btnSeriesAdd" class="mini">＋ add current config</button>
+          <button id="btnSeriesGemma" class="mini">load gemma 2×2</button>
+          <button id="btnSeriesClear" class="mini">clear</button>
+        </div>
+        <div id="seriesList" class="dim small">series empty</div>
+        <button id="btnSeriesStart" class="big custom">START SERIES</button>
       </section>
 
       <!-- ============================================= files -->

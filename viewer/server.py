@@ -92,10 +92,40 @@ def spend_totals(providers: list) -> dict | None:
     return spend
 
 
+# the built-in run series: the first-pass gemma experiment — the book × note
+# 2×2 on the default planner (gemma-4-26b-a4b-it paid, no thinking), one seed,
+# matching DIFFUSIONGEMMA_EXPERIMENT_PLAN.md (blind, 7 agents, 1000 ticks).
+def _gemma_2x2() -> list[dict]:
+    runs = []
+    for note in (False, True):
+        for book in ("none", "librarian"):
+            tag = f"{'note' if note else 'nonote'}_{'book' if book != 'none' else 'nobook'}"
+            runs.append({"preset": "gemma26", "condition": "blind",
+                         "book": book, "combine_note": note,
+                         "agents": 7, "ticks": 1000, "seed": 42,
+                         "name": f"gemma26_2x2_{tag}_s42"})
+    return runs
+
+
+GEMMA_SERIES = {"name": "gemma26 book × note 2×2", "runs": _gemma_2x2()}
+
+
+# OpenRouter gemma planner presets: name -> (model, thinking). Paid routes (the
+# free ones 429 once the daily budget is spent). Gemma 4 12B is intentionally
+# absent — OpenRouter does not expose it (400 Bad Request).
+GEMMA_PRESETS = {
+    "gemma26": ("google/gemma-4-26b-a4b-it", False),
+    "gemma26-thinking": ("google/gemma-4-26b-a4b-it", True),
+    "gemma31": ("google/gemma-4-31b-it", False),
+    "gemma31-thinking": ("google/gemma-4-31b-it", True),
+}
+
 # model presets (the configurator's quick options; "custom" uses provider/model)
 PRESETS = {
     "gemma26": "openrouter gemma-4-26b-a4b-it (paid), no thinking — default",
     "gemma26-thinking": "openrouter gemma-4-26b-a4b-it (paid), thinking on",
+    "gemma31": "openrouter gemma-4-31b-it (paid), no thinking",
+    "gemma31-thinking": "openrouter gemma-4-31b-it (paid), thinking on",
     "local-e2b": "ollama gemma4:e2b, all agents",
     "openrouter-90-10": "90% gemma-4 free / 10% (floor) qwen3.6-35b-a3b paid",
     "mock": "deterministic mock brain",
@@ -214,6 +244,8 @@ class RunManager:
         self.tick_delay = 0.0
         self._stop = threading.Event()
         self._pause = threading.Event()
+        self.queue: collections.deque = collections.deque()  # pending series runs
+        self.series: dict = {}                # {"total": n} while a series is live
         # live-derived measurements
         self.events = collections.deque(maxlen=400)
         self.counters: dict = {}
@@ -272,6 +304,25 @@ class RunManager:
 
     # ---------- control ------------------------------------------------------
     def start(self, params: dict) -> dict:
+        """A single user run — clears any pending series, then launches."""
+        with self.lock:
+            self.queue.clear()
+            self.series = {}
+        return self._launch(params)
+
+    def start_series(self, runs: list) -> dict:
+        """Queue runs to execute sequentially (each like an /api/start body);
+        returns info for the first. The rest start automatically as each ends."""
+        if not isinstance(runs, list) or not runs:
+            raise ValueError("series: need a non-empty list of runs")
+        with self.lock:
+            if self.status in ("running", "paused"):
+                raise RuntimeError("a run is already active — stop it first")
+            self.queue = collections.deque(runs[1:])
+            self.series = {"total": len(runs)}
+        return self._launch(runs[0])
+
+    def _launch(self, params: dict) -> dict:
         with self.lock:
             if self.status in ("running", "paused"):
                 raise RuntimeError("a run is already active — stop it first")
@@ -279,6 +330,10 @@ class RunManager:
             if preset not in PRESETS:
                 raise ValueError(f"unknown preset {preset!r}")
             condition = params.get("condition", "blind")
+            book = params.get("book", "none")
+            if book not in ("none", "central", "librarian", "personal", "cloud"):
+                raise ValueError(f"unknown book condition {book!r}")
+            book_manager = (params.get("book_manager") or "").strip() or None
             n_agents = int(params.get("agents", 10))
             ticks = int(params.get("ticks", 300))
             seed = int(params.get("seed", 42))
@@ -290,22 +345,25 @@ class RunManager:
                 provider, model = "mock", None
             elif preset == "openrouter-90-10":
                 provider, model = "openrouter", None
-            elif preset in ("gemma26", "gemma26-thinking"):
-                provider, model = "openrouter", "google/gemma-4-26b-a4b-it"
-                thinking = preset == "gemma26-thinking"
+            elif preset in GEMMA_PRESETS:
+                model, thinking = GEMMA_PRESETS[preset]
+                provider = "openrouter"
             else:
                 provider = params.get("provider", "mock")
                 if provider not in ("mock", "ollama", "anthropic", "openrouter"):
                     raise ValueError(f"unknown provider {provider!r}")
             name = params.get("name") or (
                 f"ui_{preset if preset != 'custom' else provider}"
-                f"_{condition}_s{seed}_{time.strftime('%H%M%S')}")
+                f"_{condition}_book-{book}_s{seed}_{time.strftime('%H%M%S')}")
             self.tick_delay = float(params.get("tick_delay", 0.12 if provider == "mock" else 0.0))
 
             cfg = dict(BASE, seed=seed, n_agents=n_agents,
                        knowledge_condition=condition,
                        combine_note=bool(params.get("combine_note", False)),
+                       book_condition=book,
                        replan_interval=int(params.get("replan", 15)))
+            if book_manager:
+                cfg["book_manager"] = book_manager
             names = clean_names(params.get("agent_names"), n_agents)
             if names:
                 cfg["agent_names"] = names
@@ -387,7 +445,8 @@ class RunManager:
             self.run_info = {"name": name, "provider": provider,
                              "preset": preset, "model": model_label,
                              "paid_agents": paid_agents,
-                             "condition": condition, "agents": n_agents,
+                             "condition": condition, "book": book,
+                             "agents": n_agents,
                              "ticks": ticks, "seed": seed,
                              "started": time.time()}
             self.status = "running"
@@ -426,6 +485,20 @@ class RunManager:
                 sim.logf.close()
             except Exception:
                 pass
+        self._advance_series()
+
+    def _advance_series(self):
+        """Called when a run ends: launch the next queued run unless we were
+        stopped or the run errored (either halts the whole series)."""
+        with self.lock:
+            halt = self._stop.is_set() or self.status == "error"
+            if halt:
+                self.queue.clear()
+            nxt = self.queue.popleft() if (self.queue and not halt) else None
+            if nxt is None:
+                self.series = {}
+        if nxt is not None:
+            self._launch(nxt)
 
     def _write_summary(self, sim: Simulation, outcome: str):
         """runs/<name>/summary.json — the durable record the Runs tab reads:
@@ -473,6 +546,9 @@ class RunManager:
     def stop(self):
         self._stop.set()
         self._pause.clear()
+        with self.lock:                  # stopping cancels the rest of a series
+            self.queue.clear()
+            self.series = {}
 
     def set_speed(self, delay: float):
         self.tick_delay = max(0.0, min(2.0, delay))
@@ -568,6 +644,10 @@ class RunManager:
                 "tick_delay": self.tick_delay,
                 "snapshot": self.snapshot,
             }
+            if self.series:
+                total = self.series["total"]
+                out["series"] = {"total": total,
+                                 "index": total - len(self.queue)}
         with self.prompt_lock:
             out["prompts"] = dict(self.prompt_store)
         out["external"] = self._external_runs()
@@ -746,6 +826,7 @@ class Handler(BaseHTTPRequestHandler):
                                   sorted(WORLD_INT | WORLD_FLOAT)},
                         "replan_interval": BASE["replan_interval"],
                         "presets": PRESETS,
+                        "series": GEMMA_SERIES,
                         "default_names": DEFAULT_NAMES,
                         "recipes": ALL_RECIPES})
         elif path == "/api/runs":
@@ -775,6 +856,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/start":
                 self._json({"ok": True, "run": MANAGER.start(params)})
+            elif self.path == "/api/start_series":
+                self._json({"ok": True,
+                            "run": MANAGER.start_series(params.get("runs") or [])})
             elif self.path == "/api/pause":
                 MANAGER.pause()
                 self._json({"ok": True})

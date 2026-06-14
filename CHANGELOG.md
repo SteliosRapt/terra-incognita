@@ -73,11 +73,34 @@ DiffusionGemma install was never used.
 
 **Default model + viewer.** `configs/openrouter.json` default chain is now the
 single paid `google/gemma-4-26b-a4b-it` (was the free gemma-4 chain, which now
-lives under the `gemma` preset). The viewer gains two presets,
-`gemma26` (no thinking, the new default selection) and `gemma26-thinking`, and
-threads an explicit `thinking` flag into the OpenRouter/Ollama provider spec.
+lives under the `gemma` preset). The viewer gains gemma planner presets in a `GEMMA_PRESETS` table —
+`gemma26`/`gemma26-thinking` (26B, the no-thinking one is the default selection)
+and `gemma31`/`gemma31-thinking` (31B) — each threading an explicit `thinking`
+flag into the OpenRouter/Ollama provider spec. (No 12B preset: `gemma-4-12b-it`
+returns 400 from OpenRouter — it is not exposed there, and no local 12B exists.)
 The legacy `openrouter-90-10` preset's "free" half is now pinned to the `gemma`
 preset so the default-chain change doesn't silently make those agents paid.
+
+**Viewer: book selector + run series.** The configurator gains a book dropdown
+(`none`/`central`/`librarian`/`personal`/`cloud`, with a book-manager field shown
+for `librarian`) wired to `book_condition`/`book_manager` — previously the UI
+could only run `book=none`. Added a sequential **run series**: queue several
+configs (add the current form, or load the built-in series) and the server runs
+them one after another (`RunManager.queue` + `_advance_series`, `/api/start_series`),
+showing `series i/total` in the header; stopping cancels the rest. The built-in
+series (`GEMMA_SERIES`, served via `/api/defaults`) is the first-pass gemma
+experiment — the book × note 2×2 on `gemma26`, blind, 7 agents × 1000 ticks,
+seed 42 (matching the DIFFUSIONGEMMA_EXPERIMENT_PLAN.md matrix), one seed/cell.
+
+**Event refinements.** The gather interrupt that conflated two cases ("no {res}
+here or inventory full") is split into distinct notices — "no {res} here"
+(`cause=none_here`) vs "your pack is full - no room for {res}" (`cause=pack_full`)
+— so the agent learns the right lesson. Combine *attempts* that were previously
+generic `plan_interrupted` (offered no items / lacked the materials) now emit
+`combine_failed` (`outcome=no_items` / `insufficient_materials`), so every
+crafting attempt shows up among the craft events; the feedback states nothing was
+actually tried, so the agent doesn't wrongly infer the combination is impossible.
+Note this raises `combine_failed` counts relative to pre-v0.41 runs.
 
 ## v0.40 — DiffusionGemma 2×2 shelter experiment (2026-06-14)
 Branch `diffusiongemma-shelter`, off `v0.39-prompt-fixes` (verified to be a
