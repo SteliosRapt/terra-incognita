@@ -138,7 +138,7 @@
           <button id="btnMock" class="big mock">MOCK PREVIEW<small>10 agents · 300 ticks · fast · no LLM</small></button>
           <button id="btnAcceptance" class="big accept">ACCEPTANCE RUN<small>gemma4:e2b · blind · 10 × 1000</small></button>
         </div>
-        <h2>▸ Configure</h2>
+        <h2>▸ Model</h2>
         <div class="form">
           <label>models
             <select id="fPreset">
@@ -160,6 +160,9 @@
             </select></label>
           <label id="rowModel" class="half hidden">model <input id="fModel" placeholder="(provider default)"
                               title="openrouter: comma-separated list = fallback chain; empty = configs/openrouter.json"></label>
+        </div>
+        <h2>▸ Conditions</h2>
+        <div class="form">
           <label>condition
             <select id="fCondition">
               <option>blind</option><option>oracle</option>
@@ -177,6 +180,11 @@
             </select></label>
           <label id="rowBookMgr" class="half hidden" title="librarian: which agent may write the book (defaults to the first agent)">
             book manager <input id="fBookMgr" placeholder="(first agent)"></label>
+          <label id="rowBookQ" class="half hidden" title="seed the shared book with the 15-question questionnaire; unchecked = the book starts empty and agents fill it freely">
+            book questions <input id="fBookQ" type="checkbox" checked></label>
+        </div>
+        <h2>▸ Run parameters</h2>
+        <div class="form">
           <label class="half">agents <input id="fAgents" type="number" value="10" min="1" max="12"></label>
           <label class="half">ticks <input id="fTicks" type="number" value="500" min="1"></label>
           <label class="half">seed <input id="fSeed" type="number" value="42"></label>

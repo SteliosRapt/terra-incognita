@@ -54,7 +54,10 @@ class Simulation:
             return
         if cond not in ("central", "librarian", "personal", "cloud"):
             raise ValueError(f"unknown book_condition: {cond}")
-        qs = load_questions(self.cfg.get("questions_path"), self.world.techtree)
+        # the book may be seeded with the questionnaire or start empty
+        # (book_questions toggle); empty still uses no rng, so determinism holds
+        qs = (load_questions(self.cfg.get("questions_path"), self.world.techtree)
+              if self.cfg.get("book_questions", True) else [])
         if cond == "personal":
             for name in names:
                 self.world.books[name] = Book(qs)
@@ -154,10 +157,14 @@ class Simulation:
         cond = self.cfg.get("book_condition", "none")
         if cond != "none":
             book, writable, reason = w.book_access(ag.id, ag.pos)
+            # the underlying book exists even when out of reach (central far away)
+            actual = (w.books.get(ag.id) if cond == "personal"
+                      else w.books.get("shared"))
             book_view = {"condition": cond, "where": w.book_pos,
                          "manager": self.cfg.get("book_manager"),
                          "readable": book is not None, "writable": writable,
-                         "reason": reason}
+                         "reason": reason,
+                         "has_questions": bool(actual and actual.questions)}
             if book is not None:
                 book_view["questions"] = [
                     dict(q, answer=book.answers.get(q["id"]))

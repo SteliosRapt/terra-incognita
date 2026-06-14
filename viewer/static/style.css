@@ -331,6 +331,7 @@ canvas.portrait { image-rendering: pixelated; border-radius: 4px;
 .acard .nm { font-family: var(--pixel); font-size: 11px; display: flex;
   align-items: center; gap: 7px; }
 .acard .nm .dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.acard .nm .aicon { font-size: 11px; flex: none; margin-left: -3px; }
 .acard .pos { color: var(--text-dim); font-size: 10px; }
 .ebar { height: 6px; background: #0c1108; border: 1px solid #1a2310; border-radius: 2px; }
 .ebar i { display: block; height: 100%; background: var(--phosphor); transition: width .3s; }

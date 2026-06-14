@@ -63,6 +63,11 @@ BOOK_SYSTEM = {
     "personal": ("You carry a private Book listing open questions about how "
                  "this world works. Recording correct answers in it is one "
                  "of your goals."),
+    # empty-book variants (book_questions off): no seeded questions to answer
+    "shared_empty": ("This world contains a single, empty Book your society can "
+                     "fill with whatever you learn about how the world works."),
+    "personal_empty": ("You carry a private, empty Book you can fill with "
+                       "whatever you learn about how this world works."),
 }
 
 ACTIONS_DOC = (
@@ -118,6 +123,8 @@ def _render_book(book: dict) -> str:
         lines.append(f"- [{q['id']}] {q['text']}\n    {ans}")
     n = book.get("n_entries", 0)
     shown = book.get("entries", [])
+    if not book["questions"] and not shown:
+        lines.append("The Book is empty.")
     if n > len(shown):
         lines.append(f"Notes (latest {len(shown)} of {n}; entries are "
                      "permanent and cannot be edited):")
@@ -127,7 +134,9 @@ def _render_book(book: dict) -> str:
         lines.append(f'  [t{e["tick"]}] {e["author"]}: "{e["text"]}"')
     if book["writable"]:
         lines.append("You may write: book_answer overwrites a question's "
-                     "answer, book_note adds a permanent note.")
+                     "answer, book_note adds a permanent note."
+                     if book["questions"] else
+                     "You may write: book_note adds a permanent note.")
     elif book.get("reason"):
         lines.append(book["reason"].capitalize() + ".")
     return "\n".join(lines)
@@ -145,7 +154,10 @@ def build_prompt(obs: Observation, persona: str | None = None,
         system += " " + COMBINE_NOTE
     if obs.book:
         cond = obs.book["condition"]
-        system += " " + BOOK_SYSTEM["personal" if cond == "personal" else "shared"]
+        scope = "personal" if cond == "personal" else "shared"
+        if not obs.book.get("has_questions", True):
+            scope += "_empty"
+        system += " " + BOOK_SYSTEM[scope]
         if cond == "librarian":
             mgr = obs.book["manager"]
             system += (" You are the keeper of the Book: only you can write "

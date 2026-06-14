@@ -99,7 +99,7 @@ def test_ordinary_run_writes_request_tick_and_performance_files(tmp_path,
     monkeypatch.setattr(ti, "RUNS", tmp_path)
     args = SimpleNamespace(
         provider="mock", model=None, preset=None, host=None,
-        condition="blind", book="none", book_manager=None,
+        condition="blind", book="none", book_manager=None, book_questions="on",
         agents=2, ticks=3, seed=42, replan=15,
         reasoning_effort="none", max_tokens=None, thinking="default",
         warmup=False, freeform=False, combine_note="off",

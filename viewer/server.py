@@ -361,6 +361,7 @@ class RunManager:
                        knowledge_condition=condition,
                        combine_note=bool(params.get("combine_note", False)),
                        book_condition=book,
+                       book_questions=bool(params.get("book_questions", True)),
                        replan_interval=int(params.get("replan", 15)))
             if book_manager:
                 cfg["book_manager"] = book_manager

@@ -102,6 +102,26 @@ crafting attempt shows up among the craft events; the feedback states nothing wa
 actually tried, so the agent doesn't wrongly infer the combination is impossible.
 Note this raises `combine_failed` counts relative to pre-v0.41 runs.
 
+**Empty-book toggle.** New `book_questions` flag (default on): a shared book
+(central/cloud/librarian) can be seeded with the 15-question questionnaire or
+start **empty** for agents to fill freely. CLI `--book-questions on|off`; viewer
+shows a "book questions" checkbox for the shared conditions. When empty, the
+prompt frames it honestly ("a single, empty Book your society can fill…", "The
+Book is empty.") and the write hint drops `book_answer` (no questions to answer).
+Determinism preserved (the empty path uses no rng). `book_questions` rides in the
+observation as `book.has_questions`.
+
+**Estimated cost + about page.** The viewer now shows an `EST TOTAL` projection
+(cost-so-far ÷ ticks-done × planned ticks) beside `SPEND` in the overview and the
+Stats tab. The About page was completed: it now documents the Book/epistemics
+conditions and questionnaire, the default model and cost displays, and a current
+"what's next" (the gemma first-pass; DiffusionGemma parked).
+
+**Run-tab layout + agent icons.** The flat configure form is grouped into labeled
+sections (Model / Conditions / Run parameters, alongside the existing Agent names
+and Run series). Live agent panels now show small activity icons: 📝 when an agent
+keeps private notes, 📖 when it has written in the book (from the event feed).
+
 ## v0.40 — DiffusionGemma 2×2 shelter experiment (2026-06-14)
 Branch `diffusiongemma-shelter`, off `v0.39-prompt-fixes` (verified to be a
 superset of `main`: it already carries the v0.38 Book/epistemics work the Book

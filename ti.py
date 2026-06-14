@@ -383,6 +383,7 @@ def cmd_run(args):
                knowledge_condition=args.condition,
                replan_interval=args.replan,
                book_condition=args.book,
+               book_questions=(args.book_questions == "on"),
                freeform_thoughts=bool(args.freeform),
                combine_note=(args.combine_note == "on"))
     if args.book_manager:
@@ -725,6 +726,8 @@ def main():
                    choices=["none", "central", "librarian", "personal", "cloud"])
     r.add_argument("--book-manager", default=None,
                    help="librarian condition: which agent keeps the book")
+    r.add_argument("--book-questions", choices=["on", "off"], default="on",
+                   help="seed the book with the questionnaire (off = empty book)")
     r.add_argument("--agents", type=int, default=10)
     r.add_argument("--ticks", type=int, default=500)
     r.add_argument("--seed", type=int, default=42)

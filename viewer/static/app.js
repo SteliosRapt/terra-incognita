@@ -650,13 +650,15 @@ function renderPanels() {
   if (!snap) { setHTML($("keyStats"), ""); return; }
   const s = snap.stats;
   const nDisc = Object.keys(s.discovered).length;
+  const est = estTotalCost(snap, s);
   setHTML($("keyStats"), `
     <span class="ks ${s.alive < snap.agents.length ? "warm" : ""}">ALIVE<b>${s.alive}/${snap.agents.length}</b></span>
     <span class="ks ${s.deaths ? "bad" : ""}">DEATHS<b>${s.deaths}</b></span>
     <span class="ks ${s.parse_rate >= 5 ? "bad" : ""}">PARSE FAIL<b>${s.parse_rate}%</b></span>
     <span class="ks ${nDisc ? "warm" : ""}">DISCOVERED<b>${nDisc}/${s.recipes.length}</b></span>
     <span class="ks">LLM CALLS<b>${s.planner_calls}</b></span>
-    ${s.spend ? `<span class="ks ${s.spend.rate_limited ? "warm" : ""}">SPEND<b>$${s.spend.cost_usd.toFixed(4)}</b></span>` : ""}`);
+    ${s.spend ? `<span class="ks ${s.spend.rate_limited ? "warm" : ""}">SPEND<b>$${s.spend.cost_usd.toFixed(4)}</b></span>` : ""}
+    ${est != null ? `<span class="ks" title="cost so far ÷ ticks done × planned ticks">EST TOTAL<b>$${est.toFixed(4)}</b></span>` : ""}`);
 
   // only the visible pane needs work
   if (ui.tab === "overview") renderOverview(snap, s);
@@ -713,9 +715,17 @@ function renderOverview(snap, s) {
 
 /* ---------------- agents */
 function renderAgents(snap) {
+  // who has written in the book (from the recent event feed)
+  const bookWriters = new Set();
+  for (const e of snap.events || [])
+    if ((e.type === "book_note_written" || e.type === "book_answer_written") && e.actor)
+      bookWriters.add(e.actor);
   const changed = setHTML($("agentList"), snap.agents.map((a, i) => {
     const cls = (a.id === selected ? " sel" : "") + (a.alive ? "" : " dead");
     const elvl = a.energy < 20 ? "crit" : a.energy < 40 ? "low" : "";
+    const aicons =
+      `${a.notes && a.notes.trim() ? '<span class="aicon" title="keeps private notes">📝</span>' : ""}` +
+      `${bookWriters.has(a.id) ? '<span class="aicon" title="has written in the book">📖</span>' : ""}`;
     const beliefs = a.beliefs.length
       ? `<ul class="beliefs">${a.beliefs.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>`
       : `<div class="dim small">(no beliefs yet)</div>`;
@@ -736,7 +746,7 @@ function renderAgents(snap) {
         <canvas class="portrait" data-i="${i}" style="width:44px;height:44px"></canvas>
         <div class="meta">
           <span class="nm"><span class="dot" style="background:${colorOf(a.id)}"></span>
-            ${esc(a.id)} <span class="pos">(${a.x}, ${a.y}) · planned t${a.last_plan_tick}</span></span>
+            ${esc(a.id)} ${aicons} <span class="pos">(${a.x}, ${a.y}) · planned t${a.last_plan_tick}</span></span>
           <div class="ebar ${elvl}"><i style="width:${Math.max(a.energy, 0)}%"></i></div>
           <span class="pos">${a.alive ? `⚡ ${a.energy}/100` : "☠ dead"}</span>
         </div>
@@ -794,9 +804,18 @@ function renderEvents(snap) {
     `<div class="dim small">no matching events (the feed keeps the last 250)</div>`);
 }
 
+/* estimated final spend: cost so far ÷ ticks done × planned ticks. null until
+   there is spend, a tick, and a planned total (mock runs have no spend). */
+function estTotalCost(snap, s) {
+  const total = (state.run && state.run.ticks) || 0;
+  if (!s.spend || !snap.tick || !total) return null;
+  return s.spend.cost_usd / snap.tick * total;
+}
+
 /* ---------------- stats */
 function renderStats(snap, s) {
   const lv = s.live, bl = state.baseline;
+  const est = estTotalCost(snap, s);
   const lat = s.latency_ms;
   const gb = s.gathered_by || {};
   const gmax = Math.max(1, ...Object.values(gb));
@@ -823,7 +842,8 @@ function renderStats(snap, s) {
         : `<div class="dim small">no LLM latency yet (mock runs have none)</div>`}
     </div>
     ${s.spend ? `<h2>▸ Spend</h2><div class="statgrid">
-      <div class="stat"><span>cost</span><b>$${s.spend.cost_usd.toFixed(4)}</b></div>
+      <div class="stat"><span>cost so far</span><b>$${s.spend.cost_usd.toFixed(4)}</b></div>
+      <div class="stat" title="cost so far ÷ ticks done × planned ticks"><span>est. total</span><b>${est != null ? "$" + est.toFixed(4) : "—"}</b></div>
       <div class="stat"><span>tokens in/out</span><b>${s.spend.prompt_tokens}/${s.spend.completion_tokens}</b></div>
       <div class="stat ${s.spend.rate_limited ? "warm" : ""}"><span>rate-limited</span><b>${s.spend.rate_limited}</b></div>
     </div>` : ""}
@@ -931,6 +951,7 @@ function currentRunParams() {
     condition: $("fCondition").value, agents: n,
     combine_note: $("fCombineNote").checked,
     book: $("fBook").value, book_manager: $("fBookMgr").value || null,
+    book_questions: $("fBookQ").checked,
     ticks: +$("fTicks").value, seed: +$("fSeed").value,
     name: $("fName").value || null,
     agent_names: namesFor(n),
@@ -938,8 +959,13 @@ function currentRunParams() {
   };
 }
 $("btnCustom").onclick = () => post("/api/start", currentRunParams());
-$("fBook").onchange = () =>
-  $("rowBookMgr").classList.toggle("hidden", $("fBook").value !== "librarian");
+$("fBook").onchange = () => {
+  const b = $("fBook").value;
+  $("rowBookMgr").classList.toggle("hidden", b !== "librarian");
+  // the "seed with questions" toggle is meaningful only for shared books
+  $("rowBookQ").classList.toggle("hidden",
+    !["central", "cloud", "librarian"].includes(b));
+};
 
 /* ---- run series: a queue executed sequentially by the server ---- */
 let SERIES = [];
@@ -1114,14 +1140,42 @@ agent may build only one, but anyone may use any shelter: standing on one costs
 The <code>combine note</code> toggle in the Run tab adds the hint “An item can
 sometimes be combined by itself.” to the prompt — the brick experiment knob.</p>
 
-<h2>▸ What's next (imminent goals)</h2>
+<h2>▸ The Book &amp; the questions (epistemics)</h2>
+<p>Beyond surviving, the experiment asks whether a society can <b>write down what
+it learns</b>. A shared questionnaire of <b>15 questions</b> is the yardstick: how
+time and energy work, what regrows (berries, wood, stone) and how fast, the
+forest/mountain/water coverage, what a <i>failed</i> combine costs you, and the
+exact recipe for each of the nine techs. Ground truth is derived from the run and
+never shown to agents; a survey judge grades each agent's answers in every
+condition.</p>
+<p>The <code>book</code> condition in the Run tab decides whether agents also have
+a place to record answers in-world, so knowledge can spread by reading rather than
+only by talking:</p>
 <ul>
-<li><b>M3 acceptance run</b> — 10 agents × 1000 ticks on a local model:
-no crash, &lt;5% parse errors, ≥1 taught recipe</li>
-<li><b>OpenRouter model mixes</b> — e.g. 90% free gemma-4 / 10% paid qwen3.6,
-does a smarter minority lift the society?</li>
-<li><b>Multi-game statistics</b> — aggregate metrics across many seeded runs,
+<li><b>none</b> — no book (control)</li>
+<li><b>central</b> — one shared book on a map marker (the 📖 sprite); you must stand on it to read or write</li>
+<li><b>librarian</b> — central, but only the book manager (first agent by default) may write; everyone may read</li>
+<li><b>personal</b> — each agent carries a private book, usable anywhere</li>
+<li><b>cloud</b> — one shared book, readable and writable from anywhere</li>
+</ul>
+
+<h2>▸ Models &amp; cost</h2>
+<p>The default planner is <code>gemma-4-26b-a4b-it</code> on OpenRouter (paid) —
+the benchmark winner (fastest, cheapest, most JSON-reliable). The Run tab offers
+26B and 31B with <b>thinking on/off</b>, the local <code>gemma4:e2b</code>, and a
+custom provider/model. OpenRouter runs cost real money: the live <b>SPEND</b> and
+an <b>EST TOTAL</b> projection (cost-so-far ÷ ticks-done × planned ticks) appear in
+the overview and the Stats tab. <b>Run series</b> queues several configs to run
+back-to-back; the built-in series is the book × note 2×2 first-pass experiment.</p>
+
+<h2>▸ What's next</h2>
+<ul>
+<li><b>First-pass gemma experiment</b> — the book × note 2×2 on
+gemma-4-26b-a4b-it (the built-in Run series), one seed per cell, exploratory</li>
+<li><b>Multi-seed statistics</b> — aggregate metrics across many seeded runs,
 not just one story</li>
+<li><b>DiffusionGemma (Colab)</b> — parked: too slow locally and would not fit
+Colab on the first tries; may revisit for a heavier pass</li>
 <li><b>Reproduction &amp; combat</b> — population dynamics and conflict</li>
 <li><b>More structures &amp; technologies</b> — deeper tree, longer horizons</li>
 </ul>`;
