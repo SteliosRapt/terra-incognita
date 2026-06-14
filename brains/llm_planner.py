@@ -48,6 +48,11 @@ BOOK_NOTE_CAP = 400       # mirror engine/actions.py caps
 BOOK_ANSWER_CAP = 300
 RESOURCES = ("berries", "wood", "stone")
 
+# the --combine-note experiment knob. When on, EXACTLY this sentence is added
+# to the system prompt (and nothing equivalent when off). It hints at the shape
+# of the self-combine recipe (1 stone -> 1 brick) without naming any recipe.
+COMBINE_NOTE = "An item can sometimes be combined by itself."
+
 # book conditions: one goal sentence appended to the system prompt
 BOOK_SYSTEM = {
     "shared": ("This world contains a single Book listing open questions "
@@ -127,12 +132,15 @@ def _render_book(book: dict) -> str:
 
 
 def build_prompt(obs: Observation, persona: str | None = None,
-                 freeform: bool = False) -> tuple[str, str]:
+                 freeform: bool = False,
+                 combine_note: bool = False) -> tuple[str, str]:
     me = obs.me
     system = SYSTEM_TEMPLATE.format(name=me["id"])
     if obs.world_size:
         system += WORLD_SHAPE_TEMPLATE.format(w=obs.world_size[0],
                                               h=obs.world_size[1])
+    if combine_note:
+        system += " " + COMBINE_NOTE
     if obs.book:
         cond = obs.book["condition"]
         system += " " + BOOK_SYSTEM["personal" if cond == "personal" else "shared"]
@@ -295,16 +303,19 @@ class LLMPlannerBrain:
     engine; this class only turns an Observation into a PlanResult."""
 
     def __init__(self, provider: Provider, telemetry_path: str | None = None,
-                 persona: str | None = None, freeform: bool = False):
+                 persona: str | None = None, freeform: bool = False,
+                 combine_note: bool = False):
         self.provider = provider
         self.telemetry_path = telemetry_path
         self.persona = persona
         self.freeform = freeform   # allow prose around the JSON (ablation knob)
+        self.combine_note = combine_note   # --combine-note experiment knob
         # sim.py fans planning out to threads only when every brain opts in
         self.parallel_safe = getattr(provider, "parallel_safe", False)
 
     def plan(self, obs: Observation) -> PlanResult:
-        system, user = build_prompt(obs, self.persona, self.freeform)
+        system, user = build_prompt(obs, self.persona, self.freeform,
+                                    self.combine_note)
         last_err = None
         for attempt in (1, 2):
             prompt = user if attempt == 1 else (
@@ -335,4 +346,101 @@ class LLMPlannerBrain:
                "error": err, "system": system, "user": user, "response": raw}
         with _telemetry_lock:
             with open(self.telemetry_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+class BatchLLMPlannerBrain:
+    """A planner that plans every agent of a tick in ONE batched model call.
+
+    Shared by all agents (the factory hands the same instance to each), so the
+    sim's planning phase can hand it the whole tick's observations at once via
+    plan_batch(). The provider must implement complete_batch((system, user)...)
+    -> (texts, metrics). Per-agent telemetry still lands in prompts.jsonl
+    (build_prompt is unchanged, so a batched run is prompt-identical to the
+    serial one); batch-level inference metrics land in model_metrics.jsonl.
+
+    Retry policy mirrors LLMPlannerBrain: one re-ask, but batched — every agent
+    whose first reply did not parse is re-prompted together with the error
+    quoted back. Whatever still fails falls back to [wait] + parse_error.
+    """
+
+    parallel_safe = False   # the batch IS the parallelism; sim must not thread it
+
+    def __init__(self, provider, telemetry_path: str | None = None,
+                 metrics_path: str | None = None, persona: str | None = None,
+                 freeform: bool = False, combine_note: bool = False):
+        if not hasattr(provider, "complete_batch"):
+            raise TypeError(f"{type(provider).__name__} has no complete_batch; "
+                            "BatchLLMPlannerBrain needs a batching provider")
+        self.provider = provider
+        self.telemetry_path = telemetry_path
+        self.metrics_path = metrics_path
+        self.persona = persona
+        self.freeform = freeform
+        self.combine_note = combine_note
+
+    def plan(self, obs: Observation) -> PlanResult:
+        """Single-agent path (e.g. a reflex-only tick): just a batch of one."""
+        return self.plan_batch([obs])[0]
+
+    def plan_batch(self, observations: list[Observation]) -> list[PlanResult]:
+        n = len(observations)
+        prompts = [build_prompt(o, self.persona, self.freeform, self.combine_note)
+                   for o in observations]
+        results: list[PlanResult | None] = [None] * n
+        last_err: dict[int, str] = {}
+        pending = list(range(n))
+        tick = observations[0].tick if observations else 0
+        for attempt in (1, 2):
+            if not pending:
+                break
+            batch_inputs = []
+            for i in pending:
+                system, user = prompts[i]
+                if attempt == 2:
+                    user = (user + "\n\nYour previous reply could not be used "
+                            f"({last_err.get(i)}). Reply again with ONLY the "
+                            "JSON object, exactly in the format requested.")
+                batch_inputs.append((system, user))
+            texts, metrics = self.provider.complete_batch(batch_inputs)
+            self._log_metrics(tick, attempt, len(pending), metrics)
+            ms = int(round(1000 * (metrics.get("duration_s") or 0.0)))
+            still = []
+            for k, i in enumerate(pending):
+                system, user = batch_inputs[k]
+                raw = texts[k]
+                err = None
+                try:
+                    results[i] = parse_response(raw)
+                except Exception as e:
+                    err = f"{type(e).__name__}: {e}"
+                    last_err[i] = err[:200]
+                self._log(observations[i], attempt, system, user, raw, ms, err)
+                if results[i] is None:
+                    still.append(i)
+            pending = still
+        for i in pending:
+            results[i] = PlanResult([{"action": "wait"}],
+                                    "(planner output unusable)", parse_error=True)
+        return results  # type: ignore[return-value]
+
+    def _log(self, obs: Observation, attempt: int, system: str, user: str,
+             raw: str | None, ms: int, err: str | None):
+        if not self.telemetry_path:
+            return
+        rec = {"tick": obs.tick, "agent": obs.me["id"], "attempt": attempt,
+               "provider": self.provider.name, "ms": ms, "ok": err is None,
+               "error": err, "system": system, "user": user, "response": raw}
+        with _telemetry_lock:
+            with open(self.telemetry_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def _log_metrics(self, tick: int, attempt: int, batch_size: int,
+                     metrics: dict):
+        if not self.metrics_path:
+            return
+        rec = {"tick": tick, "attempt": attempt, "batch_size": batch_size,
+               "provider": self.provider.name, **metrics}
+        with _telemetry_lock:
+            with open(self.metrics_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")

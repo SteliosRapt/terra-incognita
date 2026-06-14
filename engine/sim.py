@@ -194,8 +194,13 @@ class Simulation:
             ag = self.agents[name]
             if not ag.alive:
                 continue
-            # idle metabolism
-            ag.energy -= 1
+            # idle metabolism — but standing on ANY shelter (anyone's) is free.
+            # Combined with the per-step move surcharge in actions.py this gives
+            # the four shelter energy cases: on-shelter idle 0, on-shelter move 1
+            # (0 base + 1 step), normal idle 1, normal move 2 (1 base + 1 step).
+            on_shelter = (st := self.world.structures.get(ag.pos)) is not None \
+                and st.type == "shelter"
+            ag.energy -= 0 if on_shelter else 1
             # berry spoilage (each unit rolls independently; seeded rng)
             sp = self.cfg.get("berry_spoil_prob", 0.0)
             if sp and ag.inventory.get("berries", 0):
@@ -243,7 +248,14 @@ class Simulation:
                        self._replan_reason(self.agents[name], trig, left))
                    for name, trig, left in to_plan}
             names = [name for name, _, _ in to_plan]
-            if (len(names) > 1
+            batch_brain = self.brains[names[0]]
+            if (hasattr(batch_brain, "plan_batch")
+                    and all(self.brains[n] is batch_brain for n in names)):
+                # one shared batching brain (e.g. DiffusionGemma): plan the
+                # whole tick in a single batched model call.
+                plans = batch_brain.plan_batch([obs[n] for n in names])
+                results = dict(zip(names, plans))
+            elif (len(names) > 1
                     and all(getattr(self.brains[n], "parallel_safe", False)
                             for n in names)):
                 from concurrent.futures import ThreadPoolExecutor
@@ -360,7 +372,8 @@ class Simulation:
                  ("mountain", 1): "^", ("mountain", 0): "_"}
         rows = []
         agent_at = {a.pos: a.id[-1] for a in self.agents.values() if a.alive}
-        struct_char = {"fire": "F", "farm": "f", "storehouse": "#", "book": "B"}
+        struct_char = {"fire": "F", "farm": "f", "storehouse": "#", "book": "B",
+                       "shelter": "H"}
         for y in range(w.H):
             row = []
             for x in range(w.W):

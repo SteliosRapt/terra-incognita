@@ -23,6 +23,13 @@ class Provider:
     def complete(self, system: str, user: str) -> str:
         raise NotImplementedError
 
+    def complete_batch(self, prompts: list[tuple[str, str]]
+                       ) -> tuple[list[str], dict]:
+        """Plan several prompts at once. Returns (texts, metrics). The default
+        just loops complete() with no batch metrics; batching backends (e.g.
+        DiffusionGemma) override this with a real one-call batch."""
+        return [self.complete(s, u) for s, u in prompts], {}
+
 
 class OllamaProvider(Provider):
     parallel_safe = True   # blocking HTTP; Ollama serializes requests server-side
@@ -216,6 +223,129 @@ class OpenRouterProvider(Provider):
             return data["choices"][0]["message"]["content"]
 
 
+class DiffusionGemmaProvider(Provider):
+    """Lazy Transformers backend for google/diffusiongemma-26B-A4B-it, built for
+    BATCHED inference: one model.generate() plans every agent of a tick.
+
+    GPU-only — fails clearly when no CUDA device is present. All weights load
+    inside Colab (dtype='auto', device_map='auto'); the DiffusionGemma install
+    that may already exist on this machine is never touched. Tests inject
+    `model` and `processor` fakes so the batching path is exercised without
+    downloading any weights.
+    """
+    name = "diffusiongemma"
+    parallel_safe = False     # one device, batched — never call from threads
+    DEFAULT_MODEL_ID = "google/diffusiongemma-26B-A4B-it"
+
+    def __init__(self, model_id: str = DEFAULT_MODEL_ID,
+                 max_new_tokens: int = 1024, dtype: str = "auto",
+                 device_map: str = "auto", thinking: bool = True,
+                 think_token: str = "<|think|>",
+                 answer_delimiter: str | None = "<channel|>",
+                 chat_template_kwargs: dict | None = None,
+                 gen_kwargs: dict | None = None,
+                 model=None, processor=None):
+        self.model_id = model_id
+        self.max_new_tokens = max_new_tokens
+        self.dtype = dtype
+        self.device_map = device_map
+        # Thinking ON by default (model card: enable it by placing the <|think|>
+        # token at the start of the system prompt). The model then emits its
+        # reasoning in a thought channel followed by the final answer;
+        # answer_delimiter is the channel-close tag after which the answer (our
+        # JSON plan) appears, so we drop everything up to and including it.
+        # max_new_tokens is sized larger than the card's 512 to leave room for
+        # the reasoning before the JSON. All three are overridable if the actual
+        # chat template / channel markers differ.
+        self.thinking = thinking
+        self.think_token = think_token
+        self.answer_delimiter = answer_delimiter
+        self.chat_template_kwargs = dict(chat_template_kwargs or {})
+        self.gen_kwargs = dict(gen_kwargs or {})
+        self.model = model            # injected in tests; else lazy-loaded
+        self.processor = processor
+        self.name = f"diffusiongemma:{model_id}"
+
+    def _final_answer(self, text: str) -> str:
+        """With thinking on, the reply is '<thought channel> ... <delimiter>
+        <answer>'. Keep only what follows the last delimiter so the JSON plan
+        is what gets parsed; reasoning still lands verbatim in prompts.jsonl."""
+        text = str(text)
+        if self.thinking and self.answer_delimiter and self.answer_delimiter in text:
+            return text.rsplit(self.answer_delimiter, 1)[-1]
+        return text
+
+    def _ensure_loaded(self):
+        if self.model is not None and self.processor is not None:
+            return
+        import torch  # lazy
+        from transformers import (DiffusionGemmaForBlockDiffusion,  # lazy
+                                  AutoProcessor)
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "DiffusionGemmaProvider requires a CUDA GPU; none is available. "
+                "Run inference inside Colab on a GPU runtime.")
+        self.processor = AutoProcessor.from_pretrained(self.model_id)
+        self.model = DiffusionGemmaForBlockDiffusion.from_pretrained(
+            self.model_id, dtype=self.dtype, device_map=self.device_map)
+        self.model.eval()
+
+    def complete(self, system: str, user: str) -> str:
+        return self.complete_batch([(system, user)])[0][0]
+
+    def complete_batch(self, prompts: list[tuple[str, str]]
+                       ) -> tuple[list[str], dict]:
+        self._ensure_loaded()
+        import torch  # lazy
+        # thinking: prepend the <|think|> token to the system prompt (model card)
+        messages = [[{"role": "system",
+                      "content": (self.think_token + s) if self.thinking else s},
+                     {"role": "user", "content": u}] for s, u in prompts]
+        # Left-pad so one prompt-length slice strips the prompt from every row.
+        tok = getattr(self.processor, "tokenizer", self.processor)
+        if hasattr(tok, "padding_side"):
+            tok.padding_side = "left"
+        enc = self.processor.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=True,
+            return_dict=True, return_tensors="pt", padding=True,
+            **self.chat_template_kwargs)
+        device = getattr(self.model, "device", None)
+        if device is not None and hasattr(enc, "to"):
+            enc = enc.to(device)
+        in_len = enc["input_ids"].shape[1]
+        prompt_tokens = int(enc["attention_mask"].sum())
+
+        cuda = torch.cuda.is_available()
+        if cuda:
+            torch.cuda.reset_peak_memory_stats()
+        t0 = time.monotonic()
+        with torch.no_grad():
+            out = self.model.generate(**enc, max_new_tokens=self.max_new_tokens,
+                                      **self.gen_kwargs)
+        dur = time.monotonic() - t0
+
+        new = out[:, in_len:]
+        # keep special tokens when thinking so the channel markers survive for
+        # _final_answer to split on; drop them otherwise.
+        texts = self.processor.batch_decode(new, skip_special_tokens=not self.thinking)
+        texts = [self._final_answer(t) for t in texts]
+        pad_id = getattr(tok, "pad_token_id", None)
+        completion_tokens = (int((new != pad_id).sum()) if pad_id is not None
+                             else int(new.shape[0] * new.shape[1]))
+        metrics = {
+            "duration_s": round(dur, 4),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "tps": round(completion_tokens / dur, 2) if dur > 0 else 0.0,
+            "device": str(device) if device is not None else self.device_map,
+            "device_map": self.device_map,
+            "peak_gpu_mem_bytes": (int(torch.cuda.max_memory_allocated())
+                                   if cuda else None),
+        }
+        return [str(t) for t in texts], metrics
+
+
 class MockProvider(Provider):
     """Deterministic fake LLM for pipeline smoke tests and CI. It answers by
     parsing the rendered prompt — which doubles as a check that the prompt
@@ -316,6 +446,8 @@ def make_provider(spec: dict, rng: random.Random | None = None) -> Provider:
         if "model" in spec:           # CLI/UI single --model overrides the chain
             spec["models"] = spec.pop("model")
         return OpenRouterProvider(**spec)
+    if backend == "diffusiongemma":
+        return DiffusionGemmaProvider(**spec)
     if backend == "mock":
         return MockProvider(rng or random.Random(0))
     raise ValueError(f"unknown provider backend: {backend}")

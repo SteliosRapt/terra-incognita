@@ -142,7 +142,8 @@ TERRAIN_RGB = {
     "mountain": (138, 138, 142), "mountain_empty": (92, 92, 96),
 }
 STRUCT_RGB = {"fire": (224, 120, 32), "farm": (150, 116, 52),
-              "storehouse": (104, 76, 40), "book": (208, 172, 92)}
+              "storehouse": (104, 76, 40), "book": (208, 172, 92),
+              "shelter": (96, 200, 104)}   # a distinctly greener square
 AGENT_RGB = [(230, 70, 70), (70, 130, 230), (240, 200, 60), (170, 90, 220),
              (70, 200, 200), (240, 130, 200), (130, 220, 80), (240, 150, 60),
              (110, 110, 240), (90, 210, 140), (220, 90, 130), (160, 200, 230),
@@ -302,7 +303,8 @@ def cmd_run(args):
                knowledge_condition=args.condition,
                replan_interval=args.replan,
                book_condition=args.book,
-               freeform_thoughts=bool(args.freeform))
+               freeform_thoughts=bool(args.freeform),
+               combine_note=(args.combine_note == "on"))
     if args.book_manager:
         cfg["book_manager"] = args.book_manager
 
@@ -337,7 +339,8 @@ def cmd_run(args):
         if "provider" not in shared:
             shared["provider"] = make_provider(spec, rng)
         return LLMPlannerBrain(shared["provider"], telemetry_path=str(telemetry),
-                               freeform=cfg["freeform_thoughts"])
+                               freeform=cfg["freeform_thoughts"],
+                               combine_note=cfg["combine_note"])
 
     sim = Simulation(cfg, factory, str(run_dir))
     # config on disk from tick 0: live `status`/`screenshot` need it
@@ -593,6 +596,9 @@ def main():
     r.add_argument("--replan", type=int, default=15)
     r.add_argument("--freeform", action="store_true",
                    help="let models think in prose around the JSON (ablation)")
+    r.add_argument("--combine-note", choices=["on", "off"], default="off",
+                   help="add the exact hint 'An item can sometimes be combined "
+                        "by itself.' to the system prompt")
     r.add_argument("--survey", choices=["auto", "on", "off"], default="auto",
                    help="free-LLM judge grades agents' world-knowledge "
                         "(auto: on for real providers)")

@@ -65,6 +65,26 @@
       "effects": {"shared_storage_slots": 40},
       "feedback_success": "You built a STOREHOUSE. Anyone can use it.",
       "tier": 3
+    },
+    {
+      "id": "brick",
+      "ingredients": {"stone": 1},
+      "conditions": {},
+      "produces": {"type": "item", "item": "brick"},
+      "effects": {},
+      "feedback_success": "You worked a single stone into a hard BRICK.",
+      "tier": 1,
+      "comment": "Self-combine: one item type, no second ingredient. The --combine-note hint ('An item can sometimes be combined by itself.') points at this shape without naming the recipe."
+    },
+    {
+      "id": "shelter",
+      "ingredients": {"brick": 4},
+      "conditions": {},
+      "produces": {"type": "structure", "item": "shelter"},
+      "effects": {"energy_shelter": true},
+      "feedback_success": "You laid four bricks into a permanent SHELTER. Resting on it costs no energy.",
+      "tier": 2,
+      "comment": "Permanent (no lifetime_ticks). Each agent may build at most ONE; excess attempts are rejected WITHOUT consuming bricks (engine/actions.py). Any agent standing on any shelter pays no idle energy; leaving one costs 1 (engine/sim.py energy model)."
     }
   ],
   "failure_feedback": {
