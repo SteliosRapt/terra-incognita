@@ -102,6 +102,16 @@ crafting attempt shows up among the craft events; the feedback states nothing wa
 actually tried, so the agent doesn't wrongly infer the combination is impossible.
 Note this raises `combine_failed` counts relative to pre-v0.41 runs.
 
+**Observed model failure → sharper `drop` feedback.** In a librarian gemma26 run,
+Asha doom-looped: every tick she planned `drop stone qty 10` while holding only 2
+stone (pack 3/8, not full), the drop failed, the failed first step discarded the
+rest of the plan (gather/eat), and she replanned the identical mistake — starving
+at 22 energy while calling the planner every tick. Worth noting as a real 26B
+behaviour. The `drop` interrupt now reports what you actually hold and the pack
+fill ("can't drop 10 stone: you have 2 stone (pack 3/8 slots used)") so the model
+can correct instead of looping. Engine semantics unchanged (drop still fails if
+you lack the quantity — no clamp).
+
 **Empty-book toggle.** New `book_questions` flag (default on): a shared book
 (central/cloud/librarian) can be seeded with the 15-question questionnaire or
 start **empty** for agents to fill freely. CLI `--book-questions on|off`; viewer

@@ -126,8 +126,14 @@ def _drop(a, ag, world, tick):
         # M1: dropped items vanish (ground storage arrives with structures in M2)
         return True, [Event(tick, "dropped", actor=ag.id, position=ag.pos,
                             payload={"item": item, "qty": qty})]
+    # sharper feedback: state what you actually hold and that the pack has room,
+    # so the planner stops looping on "drop to free space" when it isn't full
+    have = ag.inventory.get(item, 0)
     return True, [Event(tick, "plan_interrupted", actor=ag.id,
-                        payload={"reason": f"not enough {item}"})]
+                        payload={"reason": f"can't drop {qty} {item}: you have "
+                                           f"{have} {item} (pack "
+                                           f"{ag.slots_used()}/{ag.slot_capacity()} "
+                                           f"slots used)"})]
 
 
 def _combine(a, ag, world, tick):
